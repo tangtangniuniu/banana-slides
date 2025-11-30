@@ -2,7 +2,7 @@
 
 # 🍌 蕉幻 (Banana Slides)
 
-一个基于nano banana pro的智能PPT生成工具，支持一句话生成完整PPT演示文稿，自然语言修改直接修改ppt页面，实现“Vibe PPT”
+一个基于nano banana pro的智能PPT生成工具，支持一句话生成完整PPT演示文稿，自然语言直接修改ppt页面，实现“Vibe PPT”
 
 <p>
   <a href="https://github.com/your-username/banana-slides/blob/main/LICENSE">
