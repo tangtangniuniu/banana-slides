@@ -57,6 +57,7 @@ export const OutlineEditor: React.FC = () => {
     currentProject,
     syncProject,
     updatePageLocal,
+    saveAllPages,
     reorderPages,
     deletePageById,
     addNewPage,
@@ -149,7 +150,15 @@ export const OutlineEditor: React.FC = () => {
           <span className="text-lg font-semibold">编辑大纲</span>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" icon={<Save size={18} />}>
+          <Button 
+            variant="secondary" 
+            size="sm" 
+            icon={<Save size={18} />}
+            onClick={async () => {
+              await saveAllPages();
+              // 可以添加成功提示，但为了简洁暂时不添加
+            }}
+          >
             保存
           </Button>
           <Button

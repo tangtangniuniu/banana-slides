@@ -24,6 +24,7 @@ interface ProjectState {
   
   // 页面操作
   updatePageLocal: (pageId: string, data: any) => void;
+  saveAllPages: () => Promise<void>;
   reorderPages: (newOrder: string[]) => Promise<void>;
   addNewPage: () => Promise<void>;
   deletePageById: (pageId: string) => Promise<void>;
@@ -53,9 +54,11 @@ interface ProjectState {
   exportPDF: () => Promise<void>;
 }
 
-// 防抖的API更新函数
+export const useProjectStore = create<ProjectState>((set, get) => {
+  // 防抖的API更新函数（在store内部定义，以便访问syncProject）
 const debouncedUpdatePage = debounce(
   async (projectId: string, pageId: string, data: any) => {
+      try {
     // 如果更新的是 description_content，使用专门的端点
     if (data.description_content) {
       await api.updatePageDescription(projectId, pageId, data.description_content);
@@ -64,12 +67,22 @@ const debouncedUpdatePage = debounce(
       await api.updatePageOutline(projectId, pageId, data.outline_content);
     } else {
       await api.updatePage(projectId, pageId, data);
+        }
+        
+        // API调用成功后，同步项目状态以更新updated_at
+        // 这样可以确保历史记录页面显示最新的更新时间
+        const { syncProject } = get();
+        await syncProject(projectId);
+      } catch (error: any) {
+        console.error('保存页面失败:', error);
+        // 可以在这里添加错误提示，但为了避免频繁提示，暂时只记录日志
+        // 如果需要，可以通过事件系统或toast通知用户
     }
   },
   1000
 );
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+  return {
   // 初始状态
   currentProject: null,
   isGlobalLoading: false,
@@ -209,6 +222,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     // 防抖后调用API
     debouncedUpdatePage(currentProject.id, pageId, data);
+  },
+
+  // 立即保存所有页面的更改（用于保存按钮）
+  // 等待防抖完成，然后同步项目状态以确保updated_at更新
+  saveAllPages: async () => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    // 等待防抖延迟时间（1秒）+ 额外时间确保API调用完成
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // 同步项目状态，这会从后端获取最新的updated_at
+    await get().syncProject(currentProject.id);
   },
 
   // 重新排序页面
@@ -606,5 +632,4 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ isGlobalLoading: false });
     }
   },
-}));
-
+};});
