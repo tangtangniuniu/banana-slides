@@ -376,12 +376,8 @@ export const Home: React.FC = () => {
             </span>
           </h1>
           
-          <p className="text-lg md:text-2xl text-gray-600 max-w-3xl mx-auto font-light">
-            <span className="font-medium">Vibe your PPT  like vibing code</span>
-            <br className="hidden md:block" />
-            <span className="text-base md:text-lg text-gray-500 mt-2 block">
-              降低 PPT 制作门槛，让每个人都能快速创作出美观专业的演示文稿
-            </span>
+          <p className="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto font-light">
+            Vibe your PPT like vibing code
           </p>
 
           {/* 特性标签 */}
