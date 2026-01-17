@@ -52,7 +52,11 @@ const initialFormData = {
   max_description_workers: 5,
   max_image_workers: 8,
   output_language: 'zh' as OutputLanguage,
-  enable_reasoning: false,
+  // 推理模式配置（分别控制文本和图像）
+  enable_text_reasoning: false,
+  text_thinking_budget: 1024,
+  enable_image_reasoning: false,
+  image_thinking_budget: 1024,
   baidu_ocr_api_key: '',
 };
 
@@ -192,14 +196,42 @@ const settingsSections: SectionConfig[] = [
     ],
   },
   {
-    title: '推理模式',
+    title: '文本推理模式',
     icon: <Brain size={20} />,
     fields: [
       {
-        key: 'enable_reasoning',
-        label: '启用推理（Thinking）',
+        key: 'enable_text_reasoning',
+        label: '启用文本推理',
         type: 'switch',
-        description: '开启后，支持的模型会使用 extended thinking 进行深度推理，可能获得更好的结果但会增加响应时间和 token 消耗。不需要时可关闭以节省资源。',
+        description: '开启后，文本生成（大纲、描述等）会使用 extended thinking 进行深度推理',
+      },
+      {
+        key: 'text_thinking_budget',
+        label: '文本思考负载',
+        type: 'number',
+        min: 1,
+        max: 8192,
+        description: '文本推理的思考 token 预算 (1-8192)，数值越大推理越深入',
+      },
+    ],
+  },
+  {
+    title: '图像推理模式',
+    icon: <Brain size={20} />,
+    fields: [
+      {
+        key: 'enable_image_reasoning',
+        label: '启用图像推理',
+        type: 'switch',
+        description: '开启后，图像生成会使用思考链模式，可能获得更好的构图效果',
+      },
+      {
+        key: 'image_thinking_budget',
+        label: '图像思考负载',
+        type: 'number',
+        min: 1,
+        max: 8192,
+        description: '图像推理的思考 token 预算 (1-8192)，数值越大推理越深入',
       },
     ],
   },
@@ -255,7 +287,10 @@ export const Settings: React.FC = () => {
           mineru_token: '',
           image_caption_model: response.data.image_caption_model || '',
           output_language: response.data.output_language || 'zh',
-          enable_reasoning: response.data.enable_reasoning || false,
+          enable_text_reasoning: response.data.enable_text_reasoning || false,
+          text_thinking_budget: response.data.text_thinking_budget || 1024,
+          enable_image_reasoning: response.data.enable_image_reasoning || false,
+          image_thinking_budget: response.data.image_thinking_budget || 1024,
           baidu_ocr_api_key: '',
         });
       }
@@ -331,7 +366,10 @@ export const Settings: React.FC = () => {
               mineru_token: '',
               image_caption_model: response.data.image_caption_model || '',
               output_language: response.data.output_language || 'zh',
-              enable_reasoning: response.data.enable_reasoning || false,
+              enable_text_reasoning: response.data.enable_text_reasoning || false,
+              text_thinking_budget: response.data.text_thinking_budget || 1024,
+              enable_image_reasoning: response.data.enable_image_reasoning || false,
+              image_thinking_budget: response.data.image_thinking_budget || 1024,
               baidu_ocr_api_key: '',
             });
             show({ message: '设置已重置', type: 'success' });
@@ -475,8 +513,16 @@ export const Settings: React.FC = () => {
       ? `已设置（长度: ${settings[field.lengthKey]}）`
       : field.placeholder || '';
 
+    // 判断是否禁用（思考负载字段在对应开关关闭时禁用）
+    let isDisabled = false;
+    if (field.key === 'text_thinking_budget') {
+      isDisabled = !formData.enable_text_reasoning;
+    } else if (field.key === 'image_thinking_budget') {
+      isDisabled = !formData.enable_image_reasoning;
+    }
+
     return (
-      <div key={field.key}>
+      <div key={field.key} className={isDisabled ? 'opacity-50' : ''}>
         <Input
           label={field.label}
           type={field.type === 'number' ? 'number' : field.type}
@@ -490,6 +536,7 @@ export const Settings: React.FC = () => {
           }}
           min={field.min}
           max={field.max}
+          disabled={isDisabled}
         />
         {field.description && (
           <p className="mt-1 text-sm text-gray-500">{field.description}</p>

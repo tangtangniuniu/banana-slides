@@ -88,27 +88,40 @@ class AIService:
         if has_app_context() and current_app and hasattr(current_app, "config"):
             self.text_model = current_app.config.get("TEXT_MODEL", config.TEXT_MODEL)
             self.image_model = current_app.config.get("IMAGE_MODEL", config.IMAGE_MODEL)
-            self.enable_reasoning = current_app.config.get("ENABLE_REASONING", False)
+            # 分离的文本和图像推理配置
+            self.enable_text_reasoning = current_app.config.get("ENABLE_TEXT_REASONING", False)
+            self.text_thinking_budget = current_app.config.get("TEXT_THINKING_BUDGET", 1024)
+            self.enable_image_reasoning = current_app.config.get("ENABLE_IMAGE_REASONING", False)
+            self.image_thinking_budget = current_app.config.get("IMAGE_THINKING_BUDGET", 1024)
         else:
             self.text_model = config.TEXT_MODEL
             self.image_model = config.IMAGE_MODEL
-            self.enable_reasoning = False
+            self.enable_text_reasoning = False
+            self.text_thinking_budget = 1024
+            self.enable_image_reasoning = False
+            self.image_thinking_budget = 1024
         
         # Use provided providers or create from factory based on AI_PROVIDER_FORMAT (from Flask config or env var)
         self.text_provider = text_provider or get_text_provider(model=self.text_model)
         self.image_provider = image_provider or get_image_provider(model=self.image_model)
     
-    def _get_thinking_budget(self, default_budget: int = 1000) -> int:
+    def _get_text_thinking_budget(self) -> int:
         """
-        根据 enable_reasoning 配置返回实际的 thinking_budget
+        获取文本生成的思考负载
         
-        Args:
-            default_budget: 默认的思考预算
-            
         Returns:
-            如果启用推理则返回 default_budget，否则返回 0
+            如果启用文本推理则返回配置的 budget，否则返回 0
         """
-        return default_budget if self.enable_reasoning else 0
+        return self.text_thinking_budget if self.enable_text_reasoning else 0
+    
+    def _get_image_thinking_budget(self) -> int:
+        """
+        获取图像生成的思考负载
+        
+        Returns:
+            如果启用图像推理则返回配置的 budget，否则返回 0
+        """
+        return self.image_thinking_budget if self.enable_image_reasoning else 0
     
     @staticmethod
     def extract_image_urls_from_markdown(text: str) -> List[str]:
@@ -185,8 +198,8 @@ class AIService:
         Raises:
             json.JSONDecodeError: JSON解析失败（重试3次后仍失败）
         """
-        # 调用AI生成文本（根据 enable_reasoning 配置调整 thinking_budget）
-        actual_budget = self._get_thinking_budget(thinking_budget)
+        # 调用AI生成文本（根据 enable_text_reasoning 配置调整 thinking_budget）
+        actual_budget = self._get_text_thinking_budget()
         response_text = self.text_provider.generate_text(prompt, thinking_budget=actual_budget)
         
         # 清理响应文本：移除markdown代码块标记和多余空白
@@ -219,8 +232,8 @@ class AIService:
             json.JSONDecodeError: JSON解析失败（重试3次后仍失败）
             ValueError: text_provider 不支持图片输入
         """
-        # 调用AI生成文本（带图片），根据 enable_reasoning 配置调整 thinking_budget
-        actual_budget = self._get_thinking_budget(thinking_budget)
+        # 调用AI生成文本（带图片），根据 enable_text_reasoning 配置调整 thinking_budget
+        actual_budget = self._get_text_thinking_budget()
         if hasattr(self.text_provider, 'generate_with_image'):
             response_text = self.text_provider.generate_with_image(
                 prompt=prompt,
@@ -361,8 +374,8 @@ class AIService:
             language=language
         )
         
-        # 根据 enable_reasoning 配置调整 thinking_budget
-        actual_budget = self._get_thinking_budget(1000)
+        # 根据 enable_text_reasoning 配置调整 thinking_budget
+        actual_budget = self._get_text_thinking_budget()
         response_text = self.text_provider.generate_text(desc_prompt, thinking_budget=actual_budget)
         
         return dedent(response_text)
@@ -498,14 +511,14 @@ class AIService:
             logger.debug(f"Enable reasoning/thinking: {self.enable_reasoning}")
             
             # 使用 image_provider 生成图片
-            # 根据 enable_reasoning 配置控制图像生成的思考模式
+            # 根据 enable_image_reasoning 配置控制图像生成的思考模式
             return self.image_provider.generate_image(
                 prompt=prompt,
                 ref_images=ref_images if ref_images else None,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
-                enable_thinking=self.enable_reasoning,
-                thinking_budget=1024 if self.enable_reasoning else 0
+                enable_thinking=self.enable_image_reasoning,
+                thinking_budget=self._get_image_thinking_budget()
             )
             
         except Exception as e:

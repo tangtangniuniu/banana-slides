@@ -131,9 +131,24 @@ def update_settings():
             else:
                 return bad_request("Output language must be 'zh', 'en', 'ja', or 'auto'")
 
-        # Update reasoning mode configuration
-        if "enable_reasoning" in data:
-            settings.enable_reasoning = bool(data["enable_reasoning"])
+        # Update reasoning mode configuration (separate for text and image)
+        if "enable_text_reasoning" in data:
+            settings.enable_text_reasoning = bool(data["enable_text_reasoning"])
+        
+        if "text_thinking_budget" in data:
+            budget = int(data["text_thinking_budget"])
+            if budget < 1 or budget > 8192:
+                return bad_request("Text thinking budget must be between 1 and 8192")
+            settings.text_thinking_budget = budget
+        
+        if "enable_image_reasoning" in data:
+            settings.enable_image_reasoning = bool(data["enable_image_reasoning"])
+        
+        if "image_thinking_budget" in data:
+            budget = int(data["image_thinking_budget"])
+            if budget < 1 or budget > 8192:
+                return bad_request("Image thinking budget must be between 1 and 8192")
+            settings.image_thinking_budget = budget
 
         # Update Baidu OCR configuration
         if "baidu_ocr_api_key" in data:
@@ -190,7 +205,11 @@ def reset_settings():
         settings.mineru_token = Config.MINERU_TOKEN
         settings.image_caption_model = Config.IMAGE_CAPTION_MODEL
         settings.output_language = 'zh'  # 重置为默认中文
-        settings.enable_reasoning = False  # 重置为默认关闭推理
+        # 重置推理模式配置
+        settings.enable_text_reasoning = False
+        settings.text_thinking_budget = 1024
+        settings.enable_image_reasoning = False
+        settings.image_thinking_budget = 1024
         settings.baidu_ocr_api_key = Config.BAIDU_OCR_API_KEY or None
         settings.image_resolution = Config.DEFAULT_RESOLUTION
         settings.image_aspect_ratio = Config.DEFAULT_ASPECT_RATIO
@@ -301,9 +320,12 @@ def _sync_settings_to_config(settings: Settings):
         current_app.config["OUTPUT_LANGUAGE"] = settings.output_language
         logger.info(f"Updated OUTPUT_LANGUAGE to: {settings.output_language}")
     
-    # Sync reasoning mode setting
-    current_app.config["ENABLE_REASONING"] = settings.enable_reasoning
-    logger.info(f"Updated ENABLE_REASONING to: {settings.enable_reasoning}")
+    # Sync reasoning mode settings (separate for text and image)
+    current_app.config["ENABLE_TEXT_REASONING"] = settings.enable_text_reasoning
+    current_app.config["TEXT_THINKING_BUDGET"] = settings.text_thinking_budget
+    current_app.config["ENABLE_IMAGE_REASONING"] = settings.enable_image_reasoning
+    current_app.config["IMAGE_THINKING_BUDGET"] = settings.image_thinking_budget
+    logger.info(f"Updated reasoning config: text={settings.enable_text_reasoning}(budget={settings.text_thinking_budget}), image={settings.enable_image_reasoning}(budget={settings.image_thinking_budget})")
     
     # Sync Baidu OCR settings
     if settings.baidu_ocr_api_key:
