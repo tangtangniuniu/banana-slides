@@ -915,7 +915,29 @@ export const testImageModel = async (settings?: TestSettingsOverride): Promise<A
  * 测试 MinerU PDF 解析
  * @param settings 可选的设置覆盖（未保存的设置）
  */
-export const testMineruPdf = async (settings?: TestSettingsOverride): Promise<ApiResponse<{ batch_id: string; extract_id: string; content_preview: string }>> => {
-  const response = await apiClient.post<ApiResponse<{ batch_id: string; extract_id: string; content_preview: string }>>('/api/settings/tests/mineru-pdf', settings || {});
+/**
+ * 图片转PPT (批量)
+ * @param projectId 项目ID
+ * @param files 图片文件列表
+ * @param extractorMethod 可选的组件提取方法 ('mineru' | 'hybrid')
+ * @param inpaintMethod 可选的背景修复方法 ('generative' | 'baidu' | 'hybrid')
+ */
+export const convertImagesToPPT = async (
+  projectId: string,
+  files: File[],
+  extractorMethod?: 'mineru' | 'hybrid',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid'
+): Promise<ApiResponse<{ task_id: string; page_ids: string[] }>> => {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append('images', file);
+  });
+  if (extractorMethod) formData.append('extractor_method', extractorMethod);
+  if (inpaintMethod) formData.append('inpaint_method', inpaintMethod);
+
+  const response = await apiClient.post<ApiResponse<{ task_id: string; page_ids: string[] }>>(
+    `/api/projects/${projectId}/convert-images`,
+    formData
+  );
   return response.data;
 };
