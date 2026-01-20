@@ -821,18 +821,11 @@ def export_editable_pptx_with_recursive_analysis_task(
     max_workers: int = 4,
     export_extractor_method: str = 'hybrid',
     export_inpaint_method: str = 'hybrid',
+    save_analysis: bool = False,
     app=None
 ):
     """
     使用递归图片可编辑化分析导出可编辑PPTX的后台任务
-    
-    这是新的架构方法，使用ImageEditabilityService进行递归版面分析。
-    与旧方法的区别：
-    - 不再假设图片是16:9
-    - 支持任意尺寸和分辨率
-    - 递归分析图片中的子图和图表
-    - 更智能的坐标映射和元素提取
-    - 不需要 ai_service（使用 ImageEditabilityService 和 MinerU）
     
     Args:
         task_id: 任务ID
@@ -844,19 +837,24 @@ def export_editable_pptx_with_recursive_analysis_task(
         max_workers: 并发处理数
         export_extractor_method: 组件提取方法 ('mineru' 或 'hybrid')
         export_inpaint_method: 背景修复方法 ('generative', 'baidu', 'hybrid')
+        save_analysis: 是否保存分析结果到JSON文件
         app: Flask应用实例
     """
-    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method})")
+    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, save_analysis={save_analysis})")
     
     if app is None:
         raise ValueError("Flask app instance must be provided")
     
     with app.app_context():
         import os
+        import json
         from datetime import datetime
+        from pathlib import Path
         from PIL import Image
         from models import Project
         from services.export_service import ExportService
+        from services.image_editability import ServiceConfig, ImageEditabilityService, TextAttributeExtractorFactory
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         logger.info(f"开始递归分析导出任务 {task_id} for project {project_id}")
         
@@ -882,6 +880,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                 raise ValueError('No generated images found for project')
             
             logger.info(f"找到 {len(image_paths)} 张图片")
+            total_pages = len(image_paths)
             
             # 初始化任务进度（包含消息日志）
             task = Task.query.get(task_id)
@@ -895,22 +894,19 @@ def export_editable_pptx_with_recursive_analysis_task(
             })
             db.session.commit()
             
-            # 进度回调函数 - 更新数据库中的进度
+            # 进度回调函数
             progress_messages = ["🚀 开始导出可编辑PPTX..."]
-            max_messages = 10  # 最多保留最近10条消息
+            max_messages = 10
             
             def progress_callback(step: str, message: str, percent: int):
                 """更新任务进度到数据库"""
                 nonlocal progress_messages
                 try:
-                    # 添加新消息到日志
                     new_message = f"[{step}] {message}"
                     progress_messages.append(new_message)
-                    # 只保留最近的消息
                     if len(progress_messages) > max_messages:
                         progress_messages = progress_messages[-max_messages:]
                     
-                    # 更新数据库
                     task = Task.query.get(task_id)
                     if task:
                         task.set_progress({
@@ -933,7 +929,6 @@ def export_editable_pptx_with_recursive_analysis_task(
             exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
             os.makedirs(exports_dir, exist_ok=True)
             
-            # Handle filename collision
             if not filename.endswith('.pptx'):
                 filename += '.pptx'
             
@@ -943,28 +938,73 @@ def export_editable_pptx_with_recursive_analysis_task(
                 timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
                 filename = f"{base_name}_{timestamp}.pptx"
                 output_path = os.path.join(exports_dir, filename)
-                logger.info(f"文件名冲突，使用新文件名: {filename}")
             
-            # 获取第一张图片的尺寸作为参考
+            # 获取参考尺寸
             first_img = Image.open(image_paths[0])
             slide_width, slide_height = first_img.size
             first_img.close()
             
-            logger.info(f"幻灯片尺寸: {slide_width}x{slide_height}")
-            logger.info(f"递归深度: {max_depth}, 并发数: {max_workers}")
-            progress_callback("准备", f"幻灯片尺寸: {slide_width}×{slide_height}", 3)
+            # Step 2: 显式执行分析（为了支持 save_analysis）
+            logger.info(f"Step 2: 执行图片分析 (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
+            progress_callback("分析", "初始化分析服务...", 5)
             
-            # Step 2: 创建文字属性提取器
-            from services.image_editability import TextAttributeExtractorFactory
+            config = ServiceConfig.from_defaults(
+                max_depth=max_depth,
+                extractor_method=export_extractor_method,
+                inpaint_method=export_inpaint_method
+            )
+            editability_service = ImageEditabilityService(config)
+            
+            editable_images = [None] * total_pages
+            completed_count = 0
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(editability_service.make_image_editable, img_path): idx
+                    for idx, img_path in enumerate(image_paths)
+                }
+                
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        result = future.result()
+                        editable_images[idx] = result
+                        completed_count += 1
+                        # 分析占 5% - 40% 的进度
+                        percent = 5 + int(35 * completed_count / total_pages)
+                        progress_callback("分析", f"已分析第 {completed_count}/{total_pages} 页", percent)
+                    except Exception as e:
+                        logger.error(f"处理图片 {image_paths[idx]} 失败: {e}")
+                        raise
+            
+            # Step 2.5: 保存分析结果
+            if save_analysis:
+                logger.info("Step 2.5: 保存分析结果...")
+                progress_callback("保存", "正在保存分析结果...", 42)
+                analysis_dir = Path(app.config['UPLOAD_FOLDER']) / project_id / 'analysis'
+                analysis_dir.mkdir(parents=True, exist_ok=True)
+                
+                for i, (page, editable_img) in enumerate(zip(pages, editable_images)):
+                    if not editable_img: continue
+                    try:
+                        analysis_file = analysis_dir / f"{page.id}_analysis.json"
+                        with open(analysis_file, 'w', encoding='utf-8') as f:
+                            json.dump(editable_img.to_dict(), f, ensure_ascii=False, indent=2)
+                        logger.info(f"Saved analysis for page {page.id} to {analysis_file}")
+                    except Exception as e:
+                        logger.error(f"Failed to save analysis for page {page.id}: {e}")
+
+            # Step 3: 创建文字属性提取器
             text_attribute_extractor = TextAttributeExtractorFactory.create_caption_model_extractor()
-            progress_callback("准备", "文字属性提取器已初始化", 5)
             
-            # Step 3: 调用导出方法（使用项目的导出设置）
-            logger.info(f"Step 3: 创建可编辑PPTX (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
-            progress_callback("配置", f"提取方法: {export_extractor_method}, 背景修复: {export_inpaint_method}", 6)
+            # Step 4: 生成PPTX
+            logger.info("Step 4: 生成PPTX...")
+            progress_callback("生成", "开始构建PPTX文件...", 45)
             
+            # 调用ExportService，传入已分析的editable_images
             _, export_warnings = ExportService.create_editable_pptx_with_recursive_analysis(
-                image_paths=image_paths,
+                image_paths=None, # 已提供editable_images，无需重新分析
+                editable_images=editable_images,
                 output_file=output_path,
                 slide_width_pixels=slide_width,
                 slide_height_pixels=slide_height,
@@ -978,18 +1018,14 @@ def export_editable_pptx_with_recursive_analysis_task(
             
             logger.info(f"✓ 可编辑PPTX已创建: {output_path}")
             
-            # Step 4: 标记任务完成
+            # Step 5: 标记任务完成
             download_path = f"/files/{project_id}/exports/{filename}"
-            
-            # 添加完成消息
             progress_messages.append("✅ 导出完成！")
             
-            # 添加警告信息（如果有）
             warning_messages = []
             if export_warnings and export_warnings.has_warnings():
                 warning_messages = export_warnings.to_summary()
                 progress_messages.extend(warning_messages)
-                logger.warning(f"导出有 {len(warning_messages)} 条警告")
             
             task = Task.query.get(task_id)
             if task:
@@ -1006,18 +1042,16 @@ def export_editable_pptx_with_recursive_analysis_task(
                     "filename": filename,
                     "method": "recursive_analysis",
                     "max_depth": max_depth,
-                    "warnings": warning_messages,  # 单独的警告列表
-                    "warning_details": export_warnings.to_dict() if export_warnings else {}  # 详细警告信息
+                    "warnings": warning_messages,
+                    "warning_details": export_warnings.to_dict() if export_warnings else {}
                 })
                 db.session.commit()
-                logger.info(f"✓ 任务 {task_id} 完成 - 递归分析导出成功（深度={max_depth}）")
+                logger.info(f"✓ 任务 {task_id} 完成")
         
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
             logger.error(f"✗ 任务 {task_id} 失败: {error_detail}")
-            
-            # 标记任务失败
             task = Task.query.get(task_id)
             if task:
                 task.status = 'FAILED'

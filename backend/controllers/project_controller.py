@@ -17,7 +17,9 @@ from services.ai_service_manager import get_ai_service
 from services.task_manager import (
     task_manager,
     generate_descriptions_task,
-    generate_images_task
+    generate_images_task,
+    export_editable_pptx_with_recursive_analysis_task,
+    save_image_with_version
 )
 from utils import (
     success_response, error_response, not_found, bad_request,
@@ -1060,3 +1062,115 @@ def refine_descriptions(project_id):
         db.session.rollback()
         logger.error(f"refine_descriptions failed: {str(e)}", exc_info=True)
         return error_response('AI_SERVICE_ERROR', str(e), 503)
+
+
+@project_bp.route('/<project_id>/convert-images', methods=['POST'])
+def convert_images_to_ppt(project_id):
+    """
+    POST /api/projects/{project_id}/convert-images - 批量上传图片并转换为可编辑PPTX
+    
+    Multipart/form-data:
+    - images: multiple image files (key: 'images')
+    - filename: optional, output pptx filename
+    - extractor_method: optional ('hybrid' or 'mineru'), default 'hybrid'
+    - inpaint_method: optional ('hybrid', 'baidu', 'generative'), default 'hybrid'
+    """
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+        
+        # Get uploaded files
+        uploaded_files = request.files.getlist('images')
+        if not uploaded_files:
+            return bad_request("No images provided")
+            
+        # Get parameters
+        filename = request.form.get('filename', f'presentation_converted_{project_id}.pptx')
+        extractor_method = request.form.get('extractor_method', 'hybrid')
+        inpaint_method = request.form.get('inpaint_method', 'hybrid')
+        
+        # Initialize services
+        from services import FileService
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        
+        # Create pages for each image
+        new_page_ids = []
+        
+        # Find current max order index
+        max_order = db.session.query(db.func.max(Page.order_index)).filter_by(project_id=project_id).scalar()
+        current_order = (max_order if max_order is not None else -1) + 1
+        
+        from PIL import Image
+        
+        for file in uploaded_files:
+            if not file or not file.filename:
+                continue
+                
+            # Create Page
+            page = Page(
+                project_id=project_id,
+                order_index=current_order,
+                status='COMPLETED'
+            )
+            page.set_outline_content({"title": f"Image {current_order+1}", "points": ["Imported image"]})
+            page.set_description_content({"text": "Imported from user upload"})
+            
+            db.session.add(page)
+            db.session.flush() # Get ID
+            
+            # Save image
+            try:
+                image = Image.open(file)
+                # 使用 save_image_with_version 保存图片并生成版本记录
+                image_path, _ = save_image_with_version(
+                    image, project_id, page.id, file_service, page_obj=page, image_format=image.format or 'PNG'
+                )
+                new_page_ids.append(page.id)
+                current_order += 1
+            except Exception as e:
+                logger.error(f"Failed to process image {file.filename}: {e}")
+                continue
+
+        db.session.commit()
+        
+        if not new_page_ids:
+            return bad_request("Failed to process any images")
+            
+        # Create Task
+        task = Task(
+            project_id=project_id,
+            task_type='EXPORT_EDITABLE_PPTX',
+            status='PENDING'
+        )
+        db.session.add(task)
+        db.session.commit()
+        
+        # Submit Task
+        app = current_app._get_current_object()
+        
+        task_manager.submit_task(
+            task.id,
+            export_editable_pptx_with_recursive_analysis_task,
+            project_id=project_id,
+            filename=filename,
+            file_service=file_service,
+            page_ids=new_page_ids, # Only convert the newly added pages
+            max_depth=2, # Default to recursive for better quality
+            max_workers=4,
+            export_extractor_method=extractor_method,
+            export_inpaint_method=inpaint_method,
+            save_analysis=True, # Enable saving analysis results
+            app=app
+        )
+        
+        return success_response({
+            'task_id': task.id,
+            'page_ids': new_page_ids,
+            'message': f'Started converting {len(new_page_ids)} images to PPTX'
+        }, status_code=202)
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"convert_images_to_ppt failed: {str(e)}", exc_info=True)
+        return error_response('SERVER_ERROR', str(e), 500)

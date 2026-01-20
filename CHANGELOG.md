@@ -11,6 +11,10 @@
   - 前端新增导出设置弹窗，允许用户在导出时选择版面分析模式和背景修复模式。
 - **页面导入**:
   - 后端新增 `POST /api/projects/{project_id}/pages/import-image` 接口，支持将单张图片导入为项目页面。
+- **图片转可编辑 PPT (批量)**:
+  - 后端新增 `POST /api/projects/{project_id}/convert-images` 接口，支持批量上传图片并直接转换为可编辑 PPTX。
+  - 支持自动触发 MinerU/百度 OCR 分析，并保存分析结果（JSON + 分解图片）以供后续查看。
+  - 任务完成后提供 PPTX 下载链接。
 
 ### 变更
 - **项目维护**:
