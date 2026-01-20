@@ -4,6 +4,14 @@
 
 ## [未发布] - 2026-01-20
 
+### 新增
+- **可编辑 PPT 导出增强**:
+  - 新增 `docs/make_editable_ppt.md` 技术文档，详细说明生成原理及 MinerU/百度 OCR 的作用。
+  - 后端 `export_editable_pptx` 接口支持 `extractor_method` (mineru/hybrid) 和 `inpaint_method` (baidu/generative/hybrid) 参数。
+  - 前端新增导出设置弹窗，允许用户在导出时选择版面分析模式和背景修复模式。
+- **页面导入**:
+  - 后端新增 `POST /api/projects/{project_id}/pages/import-image` 接口，支持将单张图片导入为项目页面。
+
 ### 变更
 - **项目维护**:
   - 初始化 `CHANGELOG.md` 文件以跟踪版本变更。

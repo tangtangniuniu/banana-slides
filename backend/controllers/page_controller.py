@@ -687,3 +687,70 @@ def set_current_image_version(project_id, page_id, version_id):
     except Exception as e:
         db.session.rollback()
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route('/<project_id>/pages/import-image', methods=['POST'])
+def import_image_as_page(project_id):
+    """
+    POST /api/projects/{project_id}/pages/import-image - Import image as a new page
+    
+    Multipart/form-data:
+    - image: image file
+    - order_index: optional, default to append to end
+    """
+    try:
+        project = Project.query.get(project_id)
+        
+        if not project:
+            return not_found('Project')
+        
+        if 'image' not in request.files:
+            return bad_request("No image file provided")
+            
+        file = request.files['image']
+        if file.filename == '':
+            return bad_request("No selected file")
+            
+        # Determine order index
+        order_index = request.form.get('order_index')
+        if order_index is None:
+            max_order = db.session.query(db.func.max(Page.order_index)).filter_by(project_id=project_id).scalar()
+            order_index = (max_order if max_order is not None else -1) + 1
+        else:
+            order_index = int(order_index)
+            
+        # Create page
+        page = Page(
+            project_id=project_id,
+            order_index=order_index,
+            status='COMPLETED' # Directly mark as completed
+        )
+        # Set default outline/description to indicate imported content
+        page.set_outline_content({"title": "Imported Image", "points": ["Imported from user upload"]})
+        page.set_description_content({"text": "This page was imported from an image."})
+        
+        db.session.add(page)
+        db.session.flush() # Get page.id
+        
+        # Save image
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        
+        # Save original image (using page_id as version 1)
+        from services.task_manager import save_image_with_version
+        from PIL import Image
+        
+        image = Image.open(file)
+        
+        # Save image and create version record
+        image_path, version_number = save_image_with_version(
+            image, project_id, page.id, file_service, page_obj=page, image_format=image.format or 'PNG'
+        )
+        
+        db.session.commit()
+        
+        return success_response(page.to_dict(), status_code=201)
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"import_image_as_page failed: {str(e)}", exc_info=True)
+        return error_response('SERVER_ERROR', str(e), 500)

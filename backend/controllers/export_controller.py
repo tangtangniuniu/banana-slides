@@ -268,9 +268,17 @@ def export_editable_pptx(project_id):
         # Get Flask app instance for background task
         app = current_app._get_current_object()
         
-        # 读取项目的导出设置
-        export_extractor_method = project.export_extractor_method or 'hybrid'
-        export_inpaint_method = project.export_inpaint_method or 'hybrid'
+        # 读取项目的导出设置或从请求参数获取（请求参数优先）
+        export_extractor_method = data.get('extractor_method') or project.export_extractor_method or 'hybrid'
+        export_inpaint_method = data.get('inpaint_method') or project.export_inpaint_method or 'hybrid'
+        
+        # 验证参数有效性
+        if export_extractor_method not in ['mineru', 'hybrid']:
+            export_extractor_method = 'hybrid'
+        
+        if export_inpaint_method not in ['generative', 'baidu', 'hybrid']:
+            export_inpaint_method = 'hybrid'
+            
         logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}")
         
         # 使用递归分析任务（不需要 ai_service，使用 ImageEditabilityService）

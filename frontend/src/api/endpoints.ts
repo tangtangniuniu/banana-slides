@@ -454,17 +454,23 @@ export const exportPDF = async (
  * @param projectId 项目ID
  * @param filename 可选的文件名
  * @param pageIds 可选的页面ID列表，如果不提供则导出所有页面
+ * @param extractorMethod 可选的组件提取方法 ('mineru' | 'hybrid')
+ * @param inpaintMethod 可选的背景修复方法 ('generative' | 'baidu' | 'hybrid')
  */
 export const exportEditablePPTX = async (
   projectId: string,
   filename?: string,
-  pageIds?: string[]
+  pageIds?: string[],
+  extractorMethod?: 'mineru' | 'hybrid',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid'
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const response = await apiClient.post<
     ApiResponse<{ task_id: string }>
   >(`/api/projects/${projectId}/export/editable-pptx`, {
     filename,
-    page_ids: pageIds
+    page_ids: pageIds,
+    extractor_method: extractorMethod,
+    inpaint_method: inpaintMethod
   });
   return response.data;
 };

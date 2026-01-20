@@ -22,7 +22,7 @@ import {
   FileText,
   Loader2,
 } from 'lucide-react';
-import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel } from '@/components/shared';
+import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, ExportSettingsModal } from '@/components/shared';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate } from '@/api/endpoints';
@@ -111,6 +111,10 @@ export const SlidePreview: React.FC = () => {
     (currentProject?.export_inpaint_method as ExportInpaintMethod) || 'hybrid'
   );
   const [isSavingExportSettings, setIsSavingExportSettings] = useState(false);
+  // 导出可编辑PPTX的临时设置状态
+  const [showEditableExportModal, setShowEditableExportModal] = useState(false);
+  const [tempExportExtractorMethod, setTempExportExtractorMethod] = useState<ExportExtractorMethod>('hybrid');
+  const [tempExportInpaintMethod, setTempExportInpaintMethod] = useState<ExportInpaintMethod>('hybrid');
   // 每页编辑参数缓存（前端会话内缓存，便于重复执行）
   const [editContextByPage, setEditContextByPage] = useState<Record<string, {
     prompt: string;
@@ -705,7 +709,7 @@ export const SlidePreview: React.FC = () => {
     return Array.from(selectedPageIds);
   };
 
-  const handleExport = async (type: 'pptx' | 'pdf' | 'editable-pptx') => {
+  const handleExport = async (type: 'pptx' | 'pdf' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod }) => {
     setShowExportMenu(false);
     if (!projectId) return;
     
@@ -744,7 +748,7 @@ export const SlidePreview: React.FC = () => {
         
         show({ message: '导出任务已开始，可在导出任务面板查看进度', type: 'success' });
         
-        const response = await apiExportEditablePPTX(projectId, undefined, pageIds);
+        const response = await apiExportEditablePPTX(projectId, undefined, pageIds, options?.extractor, options?.inpaint);
         const taskId = response.data?.task_id;
         
         if (taskId) {
@@ -1103,7 +1107,12 @@ export const SlidePreview: React.FC = () => {
                   导出为 PPTX
                 </button>
                 <button
-                  onClick={() => handleExport('editable-pptx')}
+                  onClick={() => {
+                    setTempExportExtractorMethod((currentProject?.export_extractor_method as ExportExtractorMethod) || 'hybrid');
+                    setTempExportInpaintMethod((currentProject?.export_inpaint_method as ExportInpaintMethod) || 'hybrid');
+                    setShowExportMenu(false);
+                    setShowEditableExportModal(true);
+                  }}
                   className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
                 >
                   导出可编辑 PPTX（Beta）
@@ -1742,6 +1751,20 @@ export const SlidePreview: React.FC = () => {
           </div>
         </div>
       </Modal>
+      {/* 导出可编辑PPTX设置 Modal */}
+      <ExportSettingsModal
+        isOpen={showEditableExportModal}
+        onClose={() => setShowEditableExportModal(false)}
+        onConfirm={(extractor, inpaint) => {
+          handleExport('editable-pptx', {
+            extractor,
+            inpaint
+          });
+          setShowEditableExportModal(false);
+        }}
+        initialExtractor={tempExportExtractorMethod}
+        initialInpaint={tempExportInpaintMethod}
+      />
       <ToastContainer />
       {ConfirmDialog}
       
