@@ -39,7 +39,7 @@ interface ServiceTestState {
 
 // 初始表单数据
 const initialFormData = {
-  ai_provider_format: 'gemini' as 'openai' | 'gemini',
+  ai_provider_format: 'gemini' as 'openai' | 'gemini' | 'vertex',
   api_base_url: '',
   api_key: '',
   text_model: '',
@@ -74,6 +74,7 @@ const settingsSections: SectionConfig[] = [
         options: [
           { value: 'openai', label: 'OpenAI 格式' },
           { value: 'gemini', label: 'Gemini 格式' },
+          { value: 'vertex', label: 'Vertex AI 格式' },
         ],
       },
       {

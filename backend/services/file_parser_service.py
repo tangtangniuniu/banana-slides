@@ -9,6 +9,8 @@ import zipfile
 import io
 import base64
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -89,14 +91,37 @@ class FileParserService:
         self._provider_format = _get_ai_provider_format(provider_format)
     
     def _get_gemini_client(self):
-        """Lazily initialize Gemini client"""
-        if self._gemini_client is None and self._google_api_key:
-            from google import genai
-            from google.genai import types
+        """Lazily initialize Gemini client, supporting both AI Studio and Vertex AI"""
+        if self._gemini_client:
+            return self._gemini_client
+
+        from google import genai
+        from google.genai import types
+        from flask import current_app
+
+        if self._provider_format == 'vertex':
+            logger.info("FileParserService: Initializing Gemini client in Vertex AI mode.")
+            project_id = current_app.config.get("VERTEX_PROJECT_ID")
+            location = current_app.config.get("VERTEX_LOCATION")
+            if not project_id:
+                logger.error("Vertex AI mode requires VERTEX_PROJECT_ID, but it's not set in app.config.")
+                return None
+            
+            self._gemini_client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location or 'us-central1'
+            )
+        elif self._google_api_key:
+            logger.info("FileParserService: Initializing Gemini client in AI Studio (API Key) mode.")
             self._gemini_client = genai.Client(
                 http_options=types.HttpOptions(base_url=self._google_api_base) if self._google_api_base else None,
                 api_key=self._google_api_key
             )
+        else:
+            logger.warning("FileParserService: Could not initialize Gemini client. API key is missing and not in Vertex AI mode.")
+            return None
+            
         return self._gemini_client
     
     def _get_openai_client(self):
@@ -111,9 +136,11 @@ class FileParserService:
     
     def _can_generate_captions(self) -> bool:
         """Check if image caption generation is available"""
+        if self._provider_format == 'vertex':
+            return True
         if self._provider_format == 'openai':
             return bool(self._openai_api_key)
-        else:
+        else: # gemini
             return bool(self._google_api_key)
     
     def parse_file(self, file_path: str, filename: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], int]:
@@ -390,7 +417,19 @@ class FileParserService:
             Tuple of (markdown_content, extract_id, error_message)
         """
         try:
-            response = requests.get(zip_url, timeout=60)
+            # Create a session with retry logic
+            session = requests.Session()
+            retry_strategy = Retry(
+                total=5,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET"]
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+
+            response = session.get(zip_url, timeout=60, verify=False)
             response.raise_for_status()
             
             # Generate unique directory name for this extraction

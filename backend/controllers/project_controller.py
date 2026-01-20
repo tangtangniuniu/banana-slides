@@ -694,8 +694,8 @@ def generate_images(project_id):
         if use_template:
             ref_image_path = file_service.get_template_path(project_id)
         
-        if not ref_image_path and not project.template_style:
-            return bad_request("请先上传模板图片或添加风格描述。")
+        # if not ref_image_path and not project.template_style:
+        #     return bad_request("请先上传模板图片或添加风格描述。")
         
         # Reconstruct outline from pages with part structure
         outline = _reconstruct_outline_from_pages(pages)

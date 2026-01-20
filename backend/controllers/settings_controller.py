@@ -154,8 +154,8 @@ def update_settings():
         # Update AI provider format configuration
         if "ai_provider_format" in data:
             provider_format = data["ai_provider_format"]
-            if provider_format not in ["openai", "gemini"]:
-                return bad_request("AI provider format must be 'openai' or 'gemini'")
+            if provider_format not in ["openai", "gemini", "vertex"]:
+                return bad_request("AI provider format must be 'openai', 'gemini', or 'vertex'")
             settings.ai_provider_format = provider_format
 
         # Update API configuration
@@ -752,8 +752,59 @@ def run_settings_test(test_name: str):
                     if tmp_file and tmp_file.exists():
                         tmp_file.unlink()
 
-            else:
-                return bad_request(f"未知测试类型: {test_name}")
+            elif test_name == "mineru-pdf":
+                mineru_token = current_app.config.get("MINERU_TOKEN", "")
+                mineru_api_base = current_app.config.get("MINERU_API_BASE", "")
+                if not mineru_token:
+                    return bad_request("未配置 MINERU_TOKEN，无法测试 MinerU 解析")
+
+                parser = FileParserService(
+                    mineru_token=mineru_token,
+                    mineru_api_base=mineru_api_base,
+                    google_api_key=current_app.config.get("GOOGLE_API_KEY", ""),
+                    google_api_base=current_app.config.get("GOOGLE_API_BASE", ""),
+                    openai_api_key=current_app.config.get("OPENAI_API_KEY", ""),
+                    openai_api_base=current_app.config.get("OPENAI_API_BASE", ""),
+                    image_caption_model=current_app.config.get("IMAGE_CAPTION_MODEL", Config.IMAGE_CAPTION_MODEL),
+                    provider_format=current_app.config.get("AI_PROVIDER_FORMAT", "gemini"),
+                )
+
+                tmp_file = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp_file = Path(tmp.name)
+                    test_image_path = _get_test_image_path()
+                    with Image.open(test_image_path) as image:
+                        if image.mode != "RGB":
+                            image = image.convert("RGB")
+                        image.save(tmp_file, format="PDF")
+
+                    batch_id, upload_url, error = parser._get_upload_url("mineru-test.pdf")
+                    if error:
+                        return error_response("MINERU_TEST_FAILED", error, 502)
+
+                    upload_error = parser._upload_file(str(tmp_file), upload_url)
+                    if upload_error:
+                        return error_response("MINERU_TEST_FAILED", upload_error, 502)
+
+                    markdown_content, extract_id, poll_error = parser._poll_result(batch_id, max_wait_time=300)
+                    if poll_error:
+                        return error_response("MINERU_TEST_FAILED", poll_error, 502)
+
+                    content_preview = (markdown_content or "").strip()[:120]
+                    return success_response(
+                        {
+                            "batch_id": batch_id,
+                            "extract_id": extract_id,
+                            "content_preview": content_preview,
+                        },
+                        "MinerU 解析测试成功"
+                    )
+                finally:
+                    if tmp_file and tmp_file.exists():
+                        tmp_file.unlink()
+
+            return bad_request(f"未知测试类型: {test_name}")
 
     except Exception as e:
         logger.error(f"Settings test failed: {str(e)}", exc_info=True)

@@ -17,15 +17,15 @@ services:
     env_file:
       - .env
     # Vertex AI 配置（使用 Vertex AI 时取消以下注释）
-    # environment:
-    #   - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-service-account.json
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-service-account.json
     volumes:
       # 持久化数据库
       - ./backend/instance:/app/backend/instance
       # 持久化上传的文件
       - ./uploads:/app/uploads
       # GCP 服务账户文件（仅 Vertex AI 用户需要取消下一行注释）
-      # - ./gcp-service-account.json:/app/gcp-service-account.json:ro
+      - ./gcp-service-account.json:/app/gcp-service-account.json:ro
     restart: unless-stopped
     healthcheck:
       # 健康检查使用容器内部固定端口 5000
