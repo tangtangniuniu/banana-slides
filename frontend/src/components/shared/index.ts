@@ -24,5 +24,6 @@ export { ProjectSettingsModal } from './ProjectSettingsModal';
 export { ExportTasksPanel } from './ExportTasksPanel';
 export { ExportSettingsModal } from './ExportSettingsModal';
 export { ImageToPPTModal } from './ImageToPPTModal';
+export { PdfToPPTModal } from './PdfToPPTModal';
 
 

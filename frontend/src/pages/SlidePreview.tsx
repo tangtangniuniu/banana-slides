@@ -32,7 +32,7 @@ import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useExportTasksStore, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
-import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportEditablePPTX as apiExportEditablePPTX } from '@/api/endpoints';
+import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportMarkdown as apiExportMarkdown, exportEditablePPTX as apiExportEditablePPTX } from '@/api/endpoints';
 import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
 
@@ -709,7 +709,7 @@ export const SlidePreview: React.FC = () => {
     return Array.from(selectedPageIds);
   };
 
-  const handleExport = async (type: 'pptx' | 'pdf' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod }) => {
+  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod }) => {
     setShowExportMenu(false);
     if (!projectId) return;
     
@@ -717,11 +717,17 @@ export const SlidePreview: React.FC = () => {
     const exportTaskId = `export-${Date.now()}`;
     
     try {
-      if (type === 'pptx' || type === 'pdf') {
+      if (type === 'pptx' || type === 'pdf' || type === 'markdown') {
         // Synchronous export - direct download, create completed task directly
-        const response = type === 'pptx' 
-          ? await apiExportPPTX(projectId, pageIds)
-          : await apiExportPDF(projectId, pageIds);
+        let response;
+        if (type === 'pptx') {
+          response = await apiExportPPTX(projectId, pageIds);
+        } else if (type === 'pdf') {
+          response = await apiExportPDF(projectId, pageIds);
+        } else {
+          response = await apiExportMarkdown(projectId, pageIds);
+        }
+        
         const downloadUrl = response.data?.download_url || response.data?.download_url_absolute;
         if (downloadUrl) {
           addTask({
@@ -1122,6 +1128,12 @@ export const SlidePreview: React.FC = () => {
                   className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
                 >
                   导出为 PDF
+                </button>
+                <button
+                  onClick={() => handleExport('markdown')}
+                  className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
+                >
+                  导出为 Markdown ZIP
                 </button>
               </div>
             )}

@@ -181,6 +181,12 @@ def update_settings():
         if "image_aspect_ratio" in data:
             aspect_ratio = data["image_aspect_ratio"]
             settings.image_aspect_ratio = aspect_ratio
+            
+        if "image_format" in data:
+            image_format = data["image_format"]
+            if image_format not in ["PNG", "JPG", "WEBP"]:
+                return bad_request("Image format must be PNG, JPG, or WEBP")
+            settings.image_format = image_format
 
         # Update worker configuration
         if "max_description_workers" in data:
@@ -304,6 +310,7 @@ def reset_settings():
         settings.baidu_ocr_api_key = Config.BAIDU_OCR_API_KEY or None
         settings.image_resolution = Config.DEFAULT_RESOLUTION
         settings.image_aspect_ratio = Config.DEFAULT_ASPECT_RATIO
+        settings.image_format = Config.IMAGE_FORMAT
         settings.max_description_workers = Config.MAX_DESCRIPTION_WORKERS
         settings.max_image_workers = Config.MAX_IMAGE_WORKERS
         settings.updated_at = datetime.now(timezone.utc)
@@ -480,6 +487,7 @@ def _sync_settings_to_config(settings: Settings):
     # Sync image generation settings
     current_app.config["DEFAULT_RESOLUTION"] = settings.image_resolution
     current_app.config["DEFAULT_ASPECT_RATIO"] = settings.image_aspect_ratio
+    current_app.config["IMAGE_FORMAT"] = settings.image_format
 
     # Sync worker settings
     current_app.config["MAX_DESCRIPTION_WORKERS"] = settings.max_description_workers

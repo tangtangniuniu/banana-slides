@@ -80,6 +80,7 @@ class Config:
     # 图片生成配置
     DEFAULT_ASPECT_RATIO = "16:9"
     DEFAULT_RESOLUTION = "2K"
+    IMAGE_FORMAT = os.getenv('IMAGE_FORMAT', 'PNG')  # 图片格式: PNG, JPG, WEBP
     
     # 日志配置
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()

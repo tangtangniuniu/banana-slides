@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, Search, Settings } from 'lucide-react';
-import { Button, Textarea, Card, useToast, MaterialGeneratorModal, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, ImagePreviewList, ImageToPPTModal } from '@/components/shared';
+import { Button, Textarea, Card, useToast, MaterialGeneratorModal, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, ImagePreviewList, ImageToPPTModal, PdfToPPTModal } from '@/components/shared';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate, uploadReferenceFile, type ReferenceFile, associateFileToProject, triggerFileParse, uploadMaterial, associateMaterialsToProject, listProjects } from '@/api/endpoints';
 import { useProjectStore } from '@/store/useProjectStore';
@@ -21,6 +21,7 @@ export const Home: React.FC = () => {
   const [selectedPresetTemplateId, setSelectedPresetTemplateId] = useState<string | null>(null);
   const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
   const [isImageToPPTModalOpen, setIsImageToPPTModalOpen] = useState(false);
+  const [isPdfToPPTModalOpen, setIsPdfToPPTModalOpen] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<ReferenceFile[]>([]);
@@ -601,6 +602,13 @@ export const Home: React.FC = () => {
               <ImagePlus size={20} className="scale-90 md:scale-100" />
               <span className="truncate">图片转 PPT</span>
             </button>
+            <button
+              onClick={() => setIsPdfToPPTModalOpen(true)}
+              className="flex-1 flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-6 py-2.5 md:py-3 rounded-lg font-medium transition-all text-sm md:text-base touch-manipulation bg-white border border-gray-200 text-gray-700 hover:bg-banana-50 active:bg-banana-100 hover:border-banana-400 hover:text-banana-700"
+            >
+              <FileText size={20} className="scale-90 md:scale-100" />
+              <span className="truncate">PDF 转 PPT</span>
+            </button>
           </div>
 
           {/* 描述 */}
@@ -803,6 +811,11 @@ export const Home: React.FC = () => {
       <ImageToPPTModal
         isOpen={isImageToPPTModalOpen}
         onClose={() => setIsImageToPPTModalOpen(false)}
+      />
+      {/* PDF转PPT模态 */}
+      <PdfToPPTModal
+        isOpen={isPdfToPPTModalOpen}
+        onClose={() => setIsPdfToPPTModalOpen(false)}
       />
       {/* 参考文件选择器 */}
       {/* 在 Home 页面，始终查询全局文件，因为此时还没有项目 */}

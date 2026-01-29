@@ -742,8 +742,9 @@ def import_image_as_page(project_id):
         image = Image.open(file)
         
         # Save image and create version record
+        image_format = current_app.config.get('IMAGE_FORMAT', 'PNG')
         image_path, version_number = save_image_with_version(
-            image, project_id, page.id, file_service, page_obj=page, image_format=image.format or 'PNG'
+            image, project_id, page.id, file_service, page_obj=page, image_format=image_format
         )
         
         db.session.commit()

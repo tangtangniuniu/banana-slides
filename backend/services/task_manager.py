@@ -408,10 +408,14 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         if not image:
                             raise ValueError("Failed to generate image")
                         
+                        # Use configured image format
+                        image_format = app.config.get('IMAGE_FORMAT', 'PNG')
+                        
                         # 优化：直接在子线程中计算版本号并保存到最终位置
                         # 每个页面独立，使用数据库事务保证版本号原子性，避免临时文件
                         image_path, next_version = save_image_with_version(
-                            image, project_id, page_id, file_service, page_obj=page_obj
+                            image, project_id, page_id, file_service, page_obj=page_obj,
+                            image_format=image_format
                         )
                         
                         return (page_id, image_path, None)
@@ -570,9 +574,13 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             if not image:
                 raise ValueError("Failed to generate image")
             
+            # Use configured image format
+            image_format = app.config.get('IMAGE_FORMAT', 'PNG')
+            
             # 保存图片并创建历史版本记录
             image_path, next_version = save_image_with_version(
-                image, project_id, page_id, file_service, page_obj=page
+                image, project_id, page_id, file_service, page_obj=page,
+                image_format=image_format
             )
             
             # Mark task as completed
@@ -669,9 +677,13 @@ def edit_page_image_task(task_id: str, project_id: str, page_id: str,
             if not image:
                 raise ValueError("Failed to edit image")
             
+            # Use configured image format
+            image_format = app.config.get('IMAGE_FORMAT', 'PNG')
+            
             # 保存编辑后的图片并创建历史版本记录
             image_path, next_version = save_image_with_version(
-                image, project_id, page_id, file_service, page_obj=page
+                image, project_id, page_id, file_service, page_obj=page,
+                image_format=image_format
             )
             
             # Mark task as completed

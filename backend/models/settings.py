@@ -34,6 +34,7 @@ class Settings(db.Model):
     
     # 百度 OCR 配置
     baidu_ocr_api_key = db.Column(db.String(500), nullable=True)  # 百度 OCR API Key
+    image_format = db.Column(db.String(10), nullable=False, default='PNG')  # 图片格式: PNG, JPG, WEBP
     
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -60,6 +61,7 @@ class Settings(db.Model):
             'enable_image_reasoning': self.enable_image_reasoning,
             'image_thinking_budget': self.image_thinking_budget,
             'baidu_ocr_api_key_length': len(self.baidu_ocr_api_key) if self.baidu_ocr_api_key else 0,
+            'image_format': self.image_format,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -101,6 +103,7 @@ class Settings(db.Model):
                 image_caption_model=Config.IMAGE_CAPTION_MODEL,
                 output_language='zh',  # 默认中文
                 baidu_ocr_api_key=Config.BAIDU_OCR_API_KEY or None,
+                image_format=Config.IMAGE_FORMAT,
             )
             settings.id = 1
             db.session.add(settings)

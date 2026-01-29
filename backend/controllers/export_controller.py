@@ -171,6 +171,70 @@ def export_pdf(project_id):
         return error_response('SERVER_ERROR', str(e), 500)
 
 
+@export_bp.route('/<project_id>/export/markdown', methods=['GET'])
+def export_markdown(project_id):
+    """
+    GET /api/projects/{project_id}/export/markdown?filename=...&page_ids=id1,id2,id3 - Export Markdown ZIP
+    
+    Query params:
+        - filename: optional custom filename
+        - page_ids: optional comma-separated page IDs to export (if not provided, exports all pages)
+    """
+    try:
+        project = Project.query.get(project_id)
+        
+        if not project:
+            return not_found('Project')
+        
+        # Get page_ids from query params and fetch filtered pages
+        selected_page_ids = parse_page_ids_from_query(request)
+        pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
+        
+        if not pages:
+            return bad_request("No pages found for project")
+        
+        # Get image paths
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        
+        image_paths = []
+        for page in pages:
+            if page.generated_image_path:
+                abs_path = file_service.get_absolute_path(page.generated_image_path)
+                image_paths.append(abs_path)
+        
+        if not image_paths:
+            return bad_request("No generated images found for project")
+        
+        # Determine export directory and filename
+        exports_dir = file_service._get_exports_dir(project_id)
+
+        # Get filename from query params or use default
+        filename = request.args.get('filename', f'presentation_{project_id}.zip')
+        if not filename.endswith('.zip'):
+            filename += '.zip'
+
+        output_path = os.path.join(exports_dir, filename)
+
+        # Generate Markdown ZIP file on disk
+        ExportService.create_markdown_zip_from_images(image_paths, output_file=output_path)
+
+        # Build download URLs
+        download_path = f"/files/{project_id}/exports/{filename}"
+        base_url = request.url_root.rstrip("/")
+        download_url_absolute = f"{base_url}{download_path}"
+
+        return success_response(
+            data={
+                "download_url": download_path,
+                "download_url_absolute": download_url_absolute,
+            },
+            message="Export Markdown task created"
+        )
+    
+    except Exception as e:
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
 @export_bp.route('/<project_id>/export/editable-pptx', methods=['POST'])
 def export_editable_pptx(project_id):
     """

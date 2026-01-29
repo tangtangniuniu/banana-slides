@@ -294,6 +294,47 @@ class ExportService:
             )
             pdf_bytes.seek(0)
             return pdf_bytes.getvalue()
+
+    @staticmethod
+    def create_markdown_zip_from_images(image_paths: List[str], output_file: str) -> None:
+        """
+        Create a ZIP file containing markdown and images
+        
+        Args:
+            image_paths: List of absolute paths to images
+            output_file: Output ZIP file path
+        """
+        import zipfile
+        
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
+        try:
+            with zipfile.ZipFile(output_file, 'w') as zipf:
+                md_content = "# Presentation\n\n"
+                
+                for i, img_path in enumerate(image_paths):
+                    if not os.path.exists(img_path):
+                        logger.warning(f"Image not found: {img_path}")
+                        continue
+                    
+                    # Add image to zip in 'images' folder
+                    filename = os.path.basename(img_path)
+                    arcname = f"images/{filename}"
+                    zipf.write(img_path, arcname)
+                    
+                    # Add slide to markdown
+                    md_content += f"## Slide {i+1}\n\n"
+                    md_content += f"![Slide {i+1}]({arcname})\n\n"
+                    md_content += "---\n\n"
+                
+                # Add markdown file to zip
+                zipf.writestr("presentation.md", md_content)
+                logger.info(f"Created markdown zip: {output_file}")
+                
+        except Exception as e:
+            logger.error(f"Failed to create markdown zip: {e}")
+            raise
        
     @staticmethod
     def _add_mineru_text_to_slide(builder, slide, text_item: Dict[str, Any], scale_x: float = 1.0, scale_y: float = 1.0):
