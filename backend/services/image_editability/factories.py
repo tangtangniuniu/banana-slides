@@ -37,17 +37,6 @@ class ExtractorFactory:
     ) -> List[ElementExtractor]:
         """
         创建默认的元素提取器列表
-        
-        Args:
-            parser_service: MinerU解析服务实例
-            upload_folder: 上传文件夹路径
-            baidu_table_ocr_provider: 百度表格OCR Provider实例（可选）
-        
-        Returns:
-            提取器列表（按优先级排序）
-        
-        Note:
-            推荐使用 create_extractor_registry() 方法，它提供更清晰的类型到提取器映射
         """
         extractors: List[ElementExtractor] = []
         
@@ -80,19 +69,6 @@ class ExtractorFactory:
     ) -> ExtractorRegistry:
         """
         创建元素类型到提取器的注册表
-        
-        默认配置：
-        - 表格类型（table, table_cell）→ 百度OCR（如果可用），否则MinerU
-        - 图片类型（image, figure, chart）→ MinerU
-        - 其他类型 → MinerU（默认）
-        
-        Args:
-            parser_service: MinerU解析服务实例
-            upload_folder: 上传文件夹路径
-            baidu_table_ocr_provider: 百度表格OCR Provider实例（可选）
-        
-        Returns:
-            配置好的ExtractorRegistry实例
         """
         # 创建MinerU提取器
         mineru_extractor = MinerUElementExtractor(parser_service, upload_folder)
@@ -137,12 +113,6 @@ class ExtractorFactory:
     ) -> Optional[BaiduAccurateOCRElementExtractor]:
         """
         创建百度高精度OCR提取器
-        
-        Args:
-            baidu_accurate_ocr_provider: 百度高精度OCR Provider实例（可选，自动创建）
-        
-        Returns:
-            BaiduAccurateOCRElementExtractor实例，如果不可用则返回None
         """
         if baidu_accurate_ocr_provider is None:
             try:
@@ -158,6 +128,18 @@ class ExtractorFactory:
         return BaiduAccurateOCRElementExtractor(baidu_accurate_ocr_provider)
     
     @staticmethod
+    def create_local_extractor(api_url: str, upload_folder: Path) -> Optional[ElementExtractor]:
+        """创建本地OCR提取器"""
+        try:
+            from .local_providers import LocalOCRElementExtractor
+            output_dir = upload_folder / 'editable_images'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            return LocalOCRElementExtractor(api_url, output_dir)
+        except Exception as e:
+            logger.error(f"创建LocalOCRElementExtractor失败: {e}")
+            return None
+
+    @staticmethod
     def create_hybrid_extractor(
         parser_service: Any,
         upload_folder: Path,
@@ -167,25 +149,6 @@ class ExtractorFactory:
     ) -> Optional[HybridElementExtractor]:
         """
         创建混合元素提取器
-        
-        混合提取器结合MinerU版面分析和百度高精度OCR：
-        - MinerU负责识别元素类型和整体布局
-        - 百度OCR负责精确的文字识别和定位
-        
-        合并策略：
-        1. 图片类型bbox里包含的百度OCR bbox → 删除（图片内的文字不需要单独提取）
-        2. 表格类型bbox里包含的百度OCR bbox → 保留百度OCR结果，删除MinerU表格bbox
-        3. 其他类型（文字等）与百度OCR bbox有交集 → 使用百度OCR结果，删除MinerU bbox
-        
-        Args:
-            parser_service: MinerU解析服务实例
-            upload_folder: 上传文件夹路径
-            baidu_accurate_ocr_provider: 百度高精度OCR Provider实例（可选，自动创建）
-            contain_threshold: 包含判断阈值，默认0.8（80%面积在内部算包含）
-            intersection_threshold: 交集判断阈值，默认0.3（30%重叠算有交集）
-        
-        Returns:
-            HybridElementExtractor实例，如果无法创建则返回None
         """
         # 创建MinerU提取器
         mineru_extractor = MinerUElementExtractor(parser_service, upload_folder)
@@ -220,21 +183,6 @@ class ExtractorFactory:
     ) -> ExtractorRegistry:
         """
         创建使用混合提取器的注册表
-        
-        默认配置：
-        - 所有类型 → 混合提取器（如果可用）
-        - 回退到MinerU（如果混合提取器不可用）
-        
-        Args:
-            parser_service: MinerU解析服务实例
-            upload_folder: 上传文件夹路径
-            baidu_table_ocr_provider: 百度表格OCR Provider实例（可选）
-            baidu_accurate_ocr_provider: 百度高精度OCR Provider实例（可选）
-            contain_threshold: 包含判断阈值
-            intersection_threshold: 交集判断阈值
-        
-        Returns:
-            配置好的ExtractorRegistry实例
         """
         # 创建MinerU提取器作为回退
         mineru_extractor = MinerUElementExtractor(parser_service, upload_folder)
@@ -291,12 +239,6 @@ class InpaintProviderFactory:
     def create_default_provider(inpainting_service: Optional[Any] = None) -> Optional[InpaintProvider]:
         """
         创建默认的Inpaint提供者（使用Volcengine Inpainting服务）
-        
-        Args:
-            inpainting_service: InpaintingService实例（可选）
-        
-        Returns:
-            InpaintProvider实例，失败返回None
         """
         if inpainting_service is None:
             from services.inpainting_service import get_inpainting_service
@@ -313,20 +255,6 @@ class InpaintProviderFactory:
     ) -> InpaintProvider:
         """
         创建基于生成式大模型的Inpaint提供者
-        
-        使用生成式大模型（如Gemini图片编辑）通过自然语言指令移除图片中的文字和图标。
-        适用于不需要精确bbox的场景，大模型自动理解并移除相关元素。
-        
-        Args:
-            ai_service: AIService实例（可选，如果不提供则自动获取）
-            aspect_ratio: 目标宽高比
-            resolution: 目标分辨率
-        
-        Returns:
-            GenerativeEditInpaintProvider实例
-        
-        Raises:
-            如果AI服务初始化失败，会抛出异常
         """
         if ai_service is None:
             from services.ai_service_manager import get_ai_service
@@ -343,16 +271,6 @@ class InpaintProviderFactory:
     ) -> InpaintProviderRegistry:
         """
         创建重绘方法注册表
-        
-        支持动态注册新元素类型，不限于预定义类型。
-        
-        Args:
-            mask_provider: 基于mask的重绘提供者（可选，自动创建）
-            generative_provider: 生成式重绘提供者（可选，自动创建）
-            default_provider_type: 默认使用的提供者类型 ("mask" 或 "generative")
-        
-        Returns:
-            配置好的InpaintProviderRegistry实例
         """
         # 自动创建提供者
         if mask_provider is None:
@@ -391,11 +309,6 @@ class InpaintProviderFactory:
     def create_baidu_inpaint_provider() -> Optional[BaiduInpaintProvider]:
         """
         创建百度图像修复提供者
-        
-        使用百度AI在指定矩形区域去除遮挡物并用背景内容填充。
-        
-        Returns:
-            BaiduInpaintProvider实例，如果不可用则返回None
         """
         try:
             from services.ai_providers.image.baidu_inpainting_provider import create_baidu_inpainting_provider
@@ -419,19 +332,6 @@ class InpaintProviderFactory:
     ) -> Optional[HybridInpaintProvider]:
         """
         创建混合Inpaint提供者（百度修复 + 生成式画质提升）
-        
-        工作流程：
-        1. 先使用百度图像修复API精确去除文字
-        2. 再使用生成式大模型提升整体画质
-        
-        Args:
-            baidu_provider: 百度图像修复提供者（可选，自动创建）
-            generative_provider: 生成式编辑提供者（可选，自动创建）
-            ai_service: AI服务实例（用于创建生成式提供者）
-            enhance_quality: 是否启用画质提升，默认True
-        
-        Returns:
-            HybridInpaintProvider实例，如果无法创建则返回None
         """
         # 创建百度修复提供者
         if baidu_provider is None:
@@ -481,14 +381,6 @@ class ServiceConfig:
     ):
         """
         初始化服务配置
-        
-        Args:
-            upload_folder: 上传文件夹路径
-            extractor_registry: 元素类型到提取器的注册表
-            inpaint_registry: 元素类型到重绘方法的注册表
-            max_depth: 最大递归深度（默认1）
-            min_image_size: 最小图片尺寸
-            min_image_area: 最小图片面积
         """
         self.upload_folder = upload_folder
         self.extractor_registry = extractor_registry
@@ -506,58 +398,13 @@ class ServiceConfig:
         ai_service: Optional[Any] = None,
         use_hybrid_extractor: bool = True,
         use_hybrid_inpaint: bool = True,
-        extractor_method: Optional[str] = None,  # 'mineru' 或 'hybrid'，优先于 use_hybrid_extractor
-        inpaint_method: Optional[str] = None,    # 'generative', 'baidu', 'hybrid'，优先于 use_hybrid_inpaint
+        extractor_method: Optional[str] = None,
+        inpaint_method: Optional[str] = None,
         **kwargs
     ) -> 'ServiceConfig':
         """
         从默认参数创建配置
-        
-        默认配置（推荐用于导出PPTX）：
-        - 元素提取：混合提取器（MinerU版面分析 + 百度高精度OCR）
-        - 背景生成：混合Inpaint（百度图像修复 + 生成式画质提升）
-        - 递归深度：1
-        
-        混合提取器合并策略：
-        1. 图片类型bbox里包含的百度OCR bbox → 删除
-        2. 表格类型bbox里包含的百度OCR bbox → 保留百度OCR结果，删除MinerU表格bbox
-        3. 其他类型与百度OCR bbox有交集 → 使用百度OCR结果
-        
-        混合Inpaint策略：
-        1. 先用百度图像修复精确去除指定区域的文字
-        2. 再用生成式模型提升整体画质
-        
-        支持动态注册新的元素类型到不同的提取器/重绘方法。
-        
-        如果不提供参数，会自动从 Flask app.config 获取配置。
-        
-        Args:
-            mineru_token: MinerU API token（可选，默认从 Flask config 获取）
-            mineru_api_base: MinerU API base URL（可选，默认从 Flask config 获取）
-            upload_folder: 上传文件夹路径（可选，默认从 Flask config 获取）
-            ai_service: AI服务实例（可选，用于生成式重绘）
-            use_hybrid_extractor: 是否使用混合提取器（默认True，会被 extractor_method 覆盖）
-            use_hybrid_inpaint: 是否使用混合Inpaint（默认True，会被 inpaint_method 覆盖）
-            extractor_method: 组件提取方法，'mineru' 或 'hybrid'（优先于 use_hybrid_extractor）
-            inpaint_method: 背景修复方法，'generative', 'baidu', 'hybrid'（优先于 use_hybrid_inpaint）
-            **kwargs: 其他配置参数
-                - max_depth: 最大递归深度（默认1）
-                - min_image_size: 最小图片尺寸（默认200）
-                - min_image_area: 最小图片面积（默认40000）
-                - contain_threshold: 混合提取器包含判断阈值（默认0.8）
-                - intersection_threshold: 混合提取器交集判断阈值（默认0.3）
-                - enhance_quality: 混合Inpaint是否启用画质提升（默认True）
-        
-        Returns:
-            ServiceConfig实例
-        
-        Raises:
-            ValueError: 如果 mineru_token 未配置
         """
-        # 处理新参数：extractor_method 优先于 use_hybrid_extractor
-        if extractor_method is not None:
-            use_hybrid_extractor = (extractor_method == 'hybrid')
-            logger.info(f"extractor_method={extractor_method} -> use_hybrid_extractor={use_hybrid_extractor}")
         # 自动从 Flask config 获取配置
         from flask import current_app, has_app_context
         
@@ -569,109 +416,74 @@ class ServiceConfig:
             if upload_folder is None:
                 upload_folder = current_app.config.get('UPLOAD_FOLDER', './uploads')
         else:
-            # 回退到默认值
             if mineru_api_base is None:
                 mineru_api_base = 'https://mineru.net'
             if upload_folder is None:
                 upload_folder = './uploads'
         
-        # 验证必需配置
-        if not mineru_token and not kwargs.get('use_local_ocr_inpaint'):
-            # 尝试从 config 获取 use_local_ocr_inpaint
-            config_use_local = False
-            if has_app_context() and current_app:
-                config_use_local = current_app.config.get('USE_LOCAL_OCR_INPAINT', False)
-            
-            if not config_use_local:
-                raise ValueError("MinerU token is required. Please configure MINERU_TOKEN.")
-        
-        from services.file_parser_service import FileParserService
-        
         # 解析upload_folder路径
         upload_path = Path(upload_folder)
         if not upload_path.is_absolute():
-            current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent
-            project_root = backend_dir.parent
-            upload_path = project_root / upload_folder.lstrip('./')
+            from config import PROJECT_ROOT
+            upload_path = Path(PROJECT_ROOT) / upload_folder.lstrip('./')
         
         logger.info(f"Upload folder resolved to: {upload_path}")
         
         # 创建提取器注册表
         extractor_registry = ExtractorRegistry()
         
-        # 决定是否使用本地服务
-        # 逻辑：
-        # 1. 如果 extractor_method 明确指定为 'local'，则强制使用本地
-        # 2. 如果 extractor_method 明确指定为 'mineru' 或 'hybrid'，则强制关闭本地 (即使全局开启)
-        # 3. 否则 (None)，使用全局配置 use_local_ocr_inpaint (优先 kwargs，其次 app.config)
-        
-        global_use_local = kwargs.get('use_local_ocr_inpaint')
-        if global_use_local is None and has_app_context() and current_app:
-            global_use_local = current_app.config.get('USE_LOCAL_OCR_INPAINT', False)
-        if global_use_local is None:
-            global_use_local = False
-        
-        if extractor_method == 'local':
-            use_local = True
-        elif extractor_method in ['mineru', 'hybrid']:
-            use_local = False
-        else:
-            use_local = global_use_local
+        # 判断使用的提取方法
+        effective_extractor_method = extractor_method
+        if effective_extractor_method is None:
+            effective_extractor_method = 'hybrid' if use_hybrid_extractor else 'mineru'
             
-        if use_local:
+        if effective_extractor_method == 'local':
             local_ocr_url = kwargs.get('local_ocr_url')
             if not local_ocr_url and has_app_context() and current_app:
                 local_ocr_url = current_app.config.get('LOCAL_OCR_URL')
             if not local_ocr_url:
                 local_ocr_url = 'http://127.0.0.1:8000/ocr'
                 
-            from .local_providers import LocalOCRElementExtractor
-            local_extractor = LocalOCRElementExtractor(local_ocr_url, upload_path / 'editable_images')
-            extractor_registry.register_default(local_extractor)
-            logger.info(f"✅ 使用本地 OCR 提取器: {local_ocr_url}")
-        else:
-            # 创建MinerU解析服务
+            local_extractor = ExtractorFactory.create_local_extractor(local_ocr_url, upload_path)
+            if local_extractor:
+                extractor_registry.register_default(local_extractor)
+                logger.info(f"✅ 使用本地 OCR 提取器: {local_ocr_url}")
+            else:
+                # 回退
+                effective_extractor_method = 'hybrid'
+        
+        if effective_extractor_method != 'local':
+            from services.file_parser_service import FileParserService
             parser_service = FileParserService(
                 mineru_token=mineru_token,
                 mineru_api_base=mineru_api_base
             )
             
-            if use_hybrid_extractor:
-                # 尝试创建混合提取器（MinerU + 百度高精度OCR）
+            if effective_extractor_method == 'hybrid':
                 hybrid_extractor = ExtractorFactory.create_hybrid_extractor(
                     parser_service=parser_service,
                     upload_folder=upload_path,
                     contain_threshold=kwargs.get('contain_threshold', 0.8),
                     intersection_threshold=kwargs.get('intersection_threshold', 0.3)
                 )
-                
                 if hybrid_extractor:
                     extractor_registry.register_default(hybrid_extractor)
-                    logger.info("✅ 混合提取器已创建（MinerU + 百度高精度OCR）")
                 else:
-                    # 回退到MinerU
                     mineru_extractor = MinerUElementExtractor(parser_service, upload_path)
                     extractor_registry.register_default(mineru_extractor)
-                    logger.warning("⚠️ 混合提取器创建失败，回退到MinerU提取器")
-            else:
-                # 使用纯MinerU提取器
+            else: # mineru
                 mineru_extractor = MinerUElementExtractor(parser_service, upload_path)
                 extractor_registry.register_default(mineru_extractor)
-                logger.info("✅ MinerU提取器已创建（通用分割）")
         
-        # 创建Inpaint提供者
+        # 创建Inpaint提供者注册表
         inpaint_registry = InpaintProviderRegistry()
         
-        # 类似提取器的逻辑
-        if inpaint_method == 'local':
-            use_local_inpaint = True
-        elif inpaint_method in ['generative', 'baidu', 'hybrid']:
-            use_local_inpaint = False
-        else:
-            use_local_inpaint = global_use_local
-        
-        if use_local_inpaint:
+        # 判断使用的Inpaint方法
+        effective_inpaint_method = inpaint_method
+        if effective_inpaint_method is None:
+            effective_inpaint_method = 'hybrid' if use_hybrid_inpaint else 'generative'
+            
+        if effective_inpaint_method == 'local':
             local_inpaint_url = kwargs.get('local_inpaint_url')
             if not local_inpaint_url and has_app_context() and current_app:
                 local_inpaint_url = current_app.config.get('LOCAL_INPAINT_URL')
@@ -683,56 +495,29 @@ class ServiceConfig:
                 inpaint_registry.register_default(local_inpaint)
                 logger.info(f"✅ 使用本地 Inpaint 提供者: {local_inpaint_url}")
             else:
-                logger.error("❌ 创建本地 Inpaint 提供者失败")
-        else:
-            # 处理 inpaint_method 参数（优先于 use_hybrid_inpaint）
-            effective_inpaint_method = inpaint_method
-            if effective_inpaint_method is None:
-                # 向后兼容：根据 use_hybrid_inpaint 转换
-                effective_inpaint_method = 'hybrid' if use_hybrid_inpaint else 'generative'
-            
-            logger.info(f"inpaint_method={effective_inpaint_method}")
-            
+                effective_inpaint_method = 'hybrid'
+                
+        if effective_inpaint_method != 'local':
             if effective_inpaint_method == 'hybrid':
-                # 混合Inpaint提供者（百度修复 + 生成式画质提升）
                 hybrid_inpaint = InpaintProviderFactory.create_hybrid_inpaint_provider(
                     ai_service=ai_service,
                     enhance_quality=kwargs.get('enhance_quality', True)
                 )
-                
                 if hybrid_inpaint:
                     inpaint_registry.register_default(hybrid_inpaint)
-                    logger.info("✅ 混合Inpaint提供者已创建（百度修复 + 生成式画质提升）")
                 else:
-                    # 回退到纯生成式重绘
-                    generative_provider = InpaintProviderFactory.create_generative_edit_provider(
-                        ai_service=ai_service
-                    )
+                    generative_provider = InpaintProviderFactory.create_generative_edit_provider(ai_service)
                     inpaint_registry.register_default(generative_provider)
-                    logger.warning("⚠️ 混合Inpaint创建失败，回退到GenerativeEdit")
-            
             elif effective_inpaint_method == 'baidu':
-                # 只用百度图像修复（不使用生成式模型，低成本）
                 baidu_inpaint = InpaintProviderFactory.create_baidu_inpaint_provider()
-                
                 if baidu_inpaint:
                     inpaint_registry.register_default(baidu_inpaint)
-                    logger.info("✅ 百度Inpaint提供者已创建（纯百度修复）")
                 else:
-                    # 回退到生成式
-                    generative_provider = InpaintProviderFactory.create_generative_edit_provider(
-                        ai_service=ai_service
-                    )
+                    generative_provider = InpaintProviderFactory.create_generative_edit_provider(ai_service)
                     inpaint_registry.register_default(generative_provider)
-                    logger.warning("⚠️ 百度Inpaint创建失败，回退到GenerativeEdit")
-            
-            else:  # 'generative' 或其他
-                # 使用纯生成式重绘
-                generative_provider = InpaintProviderFactory.create_generative_edit_provider(
-                    ai_service=ai_service
-                )
+            else: # generative
+                generative_provider = InpaintProviderFactory.create_generative_edit_provider(ai_service)
                 inpaint_registry.register_default(generative_provider)
-                logger.info("✅ 重绘注册表已创建（GenerativeEdit通用）")
         
         return cls(
             upload_folder=upload_path,
@@ -754,19 +539,6 @@ class TextAttributeExtractorFactory:
     ) -> TextAttributeExtractor:
         """
         创建基于Caption Model的文字属性提取器
-        
-        使用视觉语言模型（如Gemini）分析文字区域图像，
-        通过生成JSON的方式获取字体颜色、是否粗体、是否斜体等属性。
-        
-        Args:
-            ai_service: AIService实例（可选，如果不提供则自动获取）
-            prompt_template: 自定义的prompt模板（可选），必须使用 {content_hint} 作为占位符
-        
-        Returns:
-            CaptionModelTextAttributeExtractor实例
-        
-        Raises:
-            如果AI服务初始化失败，会抛出异常
         """
         if ai_service is None:
             from services.ai_service_manager import get_ai_service
@@ -779,9 +551,6 @@ class TextAttributeExtractorFactory:
     def create_cv_extractor() -> TextAttributeExtractor:
         """
         创建基于CV的文字属性提取器
-        
-        Returns:
-            CVTextAttributeExtractor实例
         """
         logger.info("创建CVTextAttributeExtractor")
         return CVTextAttributeExtractor()
@@ -794,59 +563,23 @@ class TextAttributeExtractorFactory:
     ) -> TextAttributeExtractorRegistry:
         """
         创建文字属性提取器注册表
-        
-        支持动态注册新元素类型，不限于预定义类型。
-        
-        Args:
-            caption_extractor: Caption Model提取器（可选，自动创建）
-            ai_service: AIService实例（可选，用于自动创建提取器）
-            mode: 提取模式 ('ai', 'local_cv', 'none')
-        
-        Returns:
-            配置好的TextAttributeExtractorRegistry实例
         """
-        # 创建注册表
         registry = TextAttributeExtractorRegistry()
-        
         extractor = None
         
         if mode == 'ai':
-            # 自动创建AI提取器
             if caption_extractor is None:
-                caption_extractor = TextAttributeExtractorFactory.create_caption_model_extractor(
-                    ai_service=ai_service
-                )
+                caption_extractor = TextAttributeExtractorFactory.create_caption_model_extractor(ai_service=ai_service)
             extractor = caption_extractor
-            logger.info("TextAttributeExtractorRegistry: 使用 AI 模式")
-            
         elif mode == 'local_cv':
-            # 创建本地CV提取器
             try:
                 extractor = TextAttributeExtractorFactory.create_cv_extractor()
-                logger.info("TextAttributeExtractorRegistry: 使用 Local CV 模式")
             except Exception as e:
-                logger.warning(f"无法创建Local CV提取器: {e}，回退到 None 模式")
+                logger.warning(f"无法创建Local CV提取器: {e}")
                 extractor = None
-                
-        elif mode == 'none':
-            logger.info("TextAttributeExtractorRegistry: 不使用样式提取 (None 模式)")
-            extractor = None
-            
-        else:
-            logger.warning(f"未知提取模式: {mode}，回退到 None 模式")
-            extractor = None
-
-        if extractor:
-            # 设置默认提取器
-            registry.register_default(extractor)
-            
-            # 注册文本类型
-            registry.register_types(
-                ['text', 'title', 'paragraph', 'heading', 'table_cell'],
-                extractor
-            )
         
-        logger.info("创建TextAttributeExtractorRegistry完成")
+        if extractor:
+            registry.register_default(extractor)
+            registry.register_types(['text', 'title', 'paragraph', 'heading', 'table_cell'], extractor)
         
         return registry
-

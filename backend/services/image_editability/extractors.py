@@ -862,14 +862,16 @@ class ExtractorRegistry:
     @classmethod
     def create_default(
         cls,
-        mineru_extractor: ElementExtractor,
+        mineru_extractor: Optional[ElementExtractor] = None,
         baidu_ocr_extractor: Optional[ElementExtractor] = None,
-        baidu_accurate_ocr_extractor: Optional[ElementExtractor] = None
+        baidu_accurate_ocr_extractor: Optional[ElementExtractor] = None,
+        local_extractor: Optional[ElementExtractor] = None
     ) -> 'ExtractorRegistry':
         """
         创建默认配置的注册表
         
         默认配置：
+        - 如果提供 local_extractor，则优先使用（通常作为默认提取器）
         - 表格类型 → 百度表格OCR（如果可用）
         - 文字类型 → 百度高精度OCR（如果可用），否则MinerU
         - 图片类型 → MinerU
@@ -879,12 +881,36 @@ class ExtractorRegistry:
             mineru_extractor: MinerU提取器实例
             baidu_ocr_extractor: 百度表格OCR提取器实例（可选）
             baidu_accurate_ocr_extractor: 百度高精度OCR提取器实例（可选）
+            local_extractor: 本地OCR提取器实例（可选）
         
         Returns:
             配置好的注册表实例
         """
         registry = cls()
         
+        # 如果有本地提取器，优先使用
+        if local_extractor:
+            registry.register_default(local_extractor)
+            registry.register_types(list(cls.TEXT_TYPES), local_extractor)
+            registry.register_types(list(cls.TABLE_TYPES), local_extractor)
+            
+            # 图片类型仍然可以使用 MinerU（如果提供了），或者也用 local
+            if mineru_extractor:
+                registry.register_types(list(cls.IMAGE_TYPES), mineru_extractor)
+            else:
+                # 假设 local 也支持图片（或者回退到默认）
+                pass
+                
+            logger.info(f"创建默认ExtractorRegistry (Local模式): 默认->{local_extractor.__class__.__name__}")
+            return registry
+
+        # 必须提供 mineru_extractor 作为回退
+        if not mineru_extractor:
+             # 如果没有提供 mineru_extractor 且没有 local_extractor，创建一个空的或者抛出错误
+             # 为了健壮性，这里允许空注册表，但在使用时可能会有问题
+             logger.warning("未提供 mineru_extractor 或 local_extractor，ExtractorRegistry 可能不完整")
+             return registry
+
         # 设置默认提取器
         registry.register_default(mineru_extractor)
         

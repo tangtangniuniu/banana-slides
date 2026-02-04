@@ -145,6 +145,7 @@ export const ImageToPPTModal: React.FC<ImageToPPTModalProps> = ({ isOpen, onClos
               >
                 <option value="hybrid">混合模式 (推荐)</option>
                 <option value="mineru">快速模式 (MinerU)</option>
+                <option value="local">本地 OCR 模式</option>
               </select>
             </div>
             <div>
@@ -159,6 +160,7 @@ export const ImageToPPTModal: React.FC<ImageToPPTModalProps> = ({ isOpen, onClos
                 <option value="hybrid">混合模式 (推荐)</option>
                 <option value="baidu">极速模式 (仅去字)</option>
                 <option value="generative">画质优先 (AI重绘)</option>
+                <option value="local">本地 LAMA 修复</option>
               </select>
             </div>
           </div>

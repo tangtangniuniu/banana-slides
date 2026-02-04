@@ -965,3 +965,37 @@ export const convertImagesToPPT = async (
   );
   return response.data;
 };
+
+/**
+ * PDF转PPT
+ * @param projectId 项目ID
+ * @param file PDF文件
+ * @param mode 转换模式 ('original' | 'reconstructed')
+ * @param resolution 分辨率 ('1K' | '2K')
+ * @param templateStyle 模板风格（仅reconstructed模式需要）
+ * @param extractorMethod 可选的组件提取方法
+ * @param inpaintMethod 可选的背景修复方法
+ */
+export const convertPdfToPPT = async (
+  projectId: string,
+  file: File,
+  mode: 'original' | 'reconstructed' = 'original',
+  resolution: '1K' | '2K' = '2K',
+  templateStyle?: string,
+  extractorMethod?: 'mineru' | 'hybrid',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid'
+): Promise<ApiResponse<{ task_id: string; page_ids: string[] }>> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('mode', mode);
+  formData.append('resolution', resolution);
+  if (templateStyle) formData.append('template_style', templateStyle);
+  if (extractorMethod) formData.append('extractor_method', extractorMethod);
+  if (inpaintMethod) formData.append('inpaint_method', inpaintMethod);
+
+  const response = await apiClient.post<ApiResponse<{ task_id: string; page_ids: string[] }>>(
+    `/api/projects/${projectId}/convert-pdf`,
+    formData
+  );
+  return response.data;
+};

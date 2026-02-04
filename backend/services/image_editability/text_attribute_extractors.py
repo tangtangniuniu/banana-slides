@@ -725,3 +725,133 @@ class TextAttributeExtractorRegistry:
         
         return registry
 
+
+class CVTextAttributeExtractor(TextAttributeExtractor):
+    """
+    基于传统 CV 算法的文字属性提取器 (Local CV)
+    
+    使用 OpenCV 分析文字区域图像，无需调用大模型，速度快。
+    提取：
+    - 字体颜色 (Domaint Color)
+    - 粗体 (Density/Thickness estimation)
+    - 斜体 (Moments/Orientation estimation)
+    """
+    
+    def __init__(self):
+        try:
+            import cv2
+            import numpy as np
+            self.cv2 = cv2
+            self.np = np
+        except ImportError:
+            logger.error("CVTextAttributeExtractor requires opencv-python and numpy.")
+            raise
+
+    def supports_batch(self) -> bool:
+        return True
+
+    def extract(
+        self,
+        image: Union[str, Image.Image],
+        text_content: Optional[str] = None,
+        **kwargs
+    ) -> TextStyleResult:
+        """
+        使用 OpenCV 提取文字样式
+        """
+        try:
+            # Convert to OpenCV format (BGR)
+            if isinstance(image, str):
+                cv_img = self.cv2.imread(image)
+                if cv_img is None:
+                    raise ValueError(f"Failed to load image: {image}")
+            elif isinstance(image, Image.Image):
+                # Convert PIL to CV2
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                cv_img = self.cv2.cvtColor(self.np.array(image), self.cv2.COLOR_RGB2BGR)
+            else:
+                raise ValueError("Unsupported image type")
+
+            if cv_img is None or cv_img.size == 0:
+                return TextStyleResult(confidence=0.0)
+
+            # 1. 提取颜色 (Font Color)
+            # 假设背景通常是浅色/白色，或者是边缘颜色
+            # 简单策略：二值化，取前景像素的平均颜色
+            gray = self.cv2.cvtColor(cv_img, self.cv2.COLOR_BGR2GRAY)
+            
+            # Otsu's thresholding to find text pixels
+            # Inverse thresholding because text is usually darker than background
+            # But we need to check if background is dark
+            
+            # Determine if background is light or dark by checking corners
+            h, w = gray.shape
+            corners = [gray[0,0], gray[0, w-1], gray[h-1, 0], gray[h-1, w-1]]
+            avg_bg = sum(corners) / 4
+            
+            is_light_bg = avg_bg > 127
+            
+            if is_light_bg:
+                # Text is dark
+                _, mask = self.cv2.threshold(gray, 0, 255, self.cv2.THRESH_BINARY_INV + self.cv2.THRESH_OTSU)
+            else:
+                # Text is light
+                _, mask = self.cv2.threshold(gray, 0, 255, self.cv2.THRESH_BINARY + self.cv2.THRESH_OTSU)
+                
+            # Count text pixels
+            text_pixel_count = self.cv2.countNonZero(mask)
+            
+            if text_pixel_count > 0:
+                # Calculate mean color of text pixels
+                mean_val = self.cv2.mean(cv_img, mask=mask)
+                # BGR to RGB
+                font_color_rgb = (int(mean_val[2]), int(mean_val[1]), int(mean_val[0]))
+            else:
+                # Fallback to black or center pixel
+                font_color_rgb = (0, 0, 0)
+                
+            # 2. 判断粗体 (Bold)
+            # 像素密度: 文字像素 / 边界框面积
+            # 这是一个非常粗略的估计，准确度有限，但速度快
+            # 也可以考虑骨架提取后的宽度分析，这里暂用密度
+            density = text_pixel_count / (h * w)
+            # 阈值经验值，需要调整
+            is_bold = density > 0.35 
+            
+            # 3. 判断斜体 (Italic)
+            # 使用矩 (Moments) 计算主轴方向
+            # 或者使用 minAreaRect
+            coords = self.cv2.findNonZero(mask)
+            is_italic = False
+            if coords is not None:
+                # minAreaRect returns (center(x, y), (width, height), angle of rotation)
+                rect = self.cv2.minAreaRect(coords)
+                angle = rect[2]
+                # opencv angle definition varies by version, usually -90 to 0 or 0 to 90
+                # Correcting for upright rects usually having angle close to -90 or 0 or 90
+                # Italic text usually has a slant. 
+                # A simple check: if angle deviates significantly from 0 or 90
+                
+                # Normalize angle to -45 to 45 deviation from vertical
+                if angle < -45:
+                    angle += 90
+                
+                # If angle is between, say, 10 and 30 degrees (or -10 to -30), it might be italic
+                # This is tricky. Let's be conservative.
+                # Usually italic is slanted ~15 degrees.
+                if 5 < abs(angle) < 40:
+                    is_italic = True
+
+            return TextStyleResult(
+                font_color_rgb=font_color_rgb,
+                is_bold=is_bold,
+                is_italic=is_italic,
+                confidence=0.6, # Lower confidence than AI
+                metadata={'source': 'local_cv'}
+            )
+
+        except Exception as e:
+            logger.error(f"CV extraction failed: {e}")
+            return TextStyleResult(confidence=0.0, metadata={'error': str(e)})
+

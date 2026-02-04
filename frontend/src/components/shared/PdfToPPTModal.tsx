@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
-import { Upload, X, FileText } from 'lucide-react';
-import { Modal, Button, useToast } from '@/components/shared';
-import { createProject, uploadReferenceFile, triggerFileParse, getReferenceFile, generateOutline } from '@/api/endpoints';
+import { Upload, X, FileText, Settings, Sparkles, Layers } from 'lucide-react';
+import { Modal, Button, useToast, Textarea } from '@/components/shared';
+import { createProject, convertPdfToPPT } from '@/api/endpoints';
 import { useNavigate } from 'react-router-dom';
+import type { ExportExtractorMethod, ExportInpaintMethod } from '@/types';
 
 interface PdfToPPTModalProps {
   isOpen: boolean;
@@ -14,7 +15,15 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
   const { show } = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progressMessage, setProgressMessage] = useState('');
+  
+  // 转换设置
+  const [mode, setMode] = useState<'original' | 'reconstructed'>('original');
+  const [resolution, setResolution] = useState<'1K' | '2K'>('2K');
+  const [templateStyle, setTemplateStyle] = useState('');
+  const [extractorMethod, setExtractorMethod] = useState<ExportExtractorMethod>('hybrid');
+  const [inpaintMethod, setInpaintMethod] = useState<ExportInpaintMethod>('local'); // 默认本地
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -36,82 +45,48 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
     setFile(null);
   };
 
-  const pollFileStatus = async (fileId: string): Promise<boolean> => {
-    const maxRetries = 60; // 5 minutes max (5s * 60)
-    let retries = 0;
-
-    return new Promise((resolve, reject) => {
-      const checkStatus = async () => {
-        try {
-          const response = await getReferenceFile(fileId);
-          const status = response.data?.file?.parse_status;
-
-          if (status === 'completed') {
-            resolve(true);
-          } else if (status === 'failed') {
-            reject(new Error('PDF 解析失败'));
-          } else {
-            retries++;
-            if (retries >= maxRetries) {
-              reject(new Error('PDF 解析超时'));
-            } else {
-              setTimeout(checkStatus, 5000);
-            }
-          }
-        } catch (error) {
-          reject(error);
-        }
-      };
-      checkStatus();
-    });
-  };
-
   const handleSubmit = async () => {
     if (!file) return;
+
+    if (mode === 'reconstructed' && !templateStyle.trim()) {
+      show({ message: '重构模式下请输入风格描述', type: 'warning' });
+      return;
+    }
 
     setIsProcessing(true);
     try {
       // 1. 创建新项目
-      setProgressMessage('正在创建项目...');
       const projectResponse = await createProject({
         creation_type: 'idea',
-        idea_prompt: '基于参考文件内容生成演示文稿大纲，请提取文件中的核心观点和结构。',
+        idea_prompt: `PDF Import: ${file.name}`,
+        template_style: templateStyle || undefined
       });
       
       const projectId = projectResponse.data?.project_id;
       if (!projectId) throw new Error('创建项目失败');
 
-      // 2. 上传 PDF 文件
-      setProgressMessage('正在上传 PDF...');
-      const uploadResponse = await uploadReferenceFile(file, projectId);
-      const fileId = uploadResponse.data?.file?.id;
-      if (!fileId) throw new Error('上传文件失败');
-
-      // 3. 触发解析 (上传接口可能自动触发，但手动确保一下)
-      // uploadReferenceFile logic in backend/controllers/reference_file_controller.py 
-      // automatically triggers parsing via thread if status is pending.
-      // But we need to wait for it.
+      // 2. 调用转换接口 (异步任务)
+      await convertPdfToPPT(
+        projectId, 
+        file, 
+        mode, 
+        resolution, 
+        templateStyle,
+        extractorMethod,
+        inpaintMethod
+      );
       
-      // 4. 等待解析完成
-      setProgressMessage('正在解析 PDF 内容 (可能需要几分钟)...');
-      await pollFileStatus(fileId);
-
-      // 5. 生成大纲
-      setProgressMessage('正在生成 PPT 大纲...');
-      await generateOutline(projectId);
+      show({ message: '已提交 PDF 转换任务，正在跳转...', type: 'success' });
       
-      show({ message: '大纲生成成功，正在跳转...', type: 'success' });
-      
-      // 6. 跳转到大纲页
-      navigate(`/project/${projectId}/outline`);
+      // 3. 跳转到预览页（显示任务进度）
+      navigate(`/project/${projectId}/preview`);
       onClose();
       
     } catch (error: any) {
-      console.error('PDF 转 PPT 失败:', error);
-      show({ message: error.message || '处理失败', type: 'error' });
+      console.error('PDF 转换失败:', error);
+      show({ message: error.message || '转换失败', type: 'error' });
     } finally {
       setIsProcessing(false);
-      setProgressMessage('');
     }
   };
 
@@ -119,21 +94,56 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="PDF 转 PPT"
-      size="md"
+      title="PDF 转可编辑 PPT"
+      size="lg"
     >
       <div className="space-y-6">
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-          <p className="font-semibold mb-1">💡 功能说明</p>
-          <p>
-            上传 PDF 文档，AI 将自动阅读并提取其中的核心内容，为您生成结构化的 PPT 大纲。
+        <div className="bg-banana-50 border border-banana-200 rounded-lg p-4 text-sm text-banana-800">
+          <p className="font-semibold mb-1 flex items-center gap-2">
+            <Sparkles size={16} /> 功能说明
           </p>
+          <p>
+            将 PDF 每一页转换为高清图片，并利用 AI 识别其中的元素，重建为完全可编辑的 PPT 幻灯片。
+          </p>
+        </div>
+
+        {/* 模式选择 */}
+        <div className="grid grid-cols-2 gap-4">
+          <button
+            onClick={() => setMode('original')}
+            className={`p-4 rounded-xl border-2 transition-all text-left ${
+              mode === 'original' 
+                ? 'border-banana-500 bg-banana-50 ring-2 ring-banana-200' 
+                : 'border-gray-100 bg-gray-50 hover:border-gray-200'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Layers size={18} className={mode === 'original' ? 'text-banana-600' : 'text-gray-400'} />
+              <span className="font-semibold">原始转换</span>
+            </div>
+            <p className="text-xs text-gray-500">保持原始页面布局和设计，仅实现可编辑化</p>
+          </button>
+          
+          <button
+            onClick={() => setMode('reconstructed')}
+            className={`p-4 rounded-xl border-2 transition-all text-left ${
+              mode === 'reconstructed' 
+                ? 'border-banana-500 bg-banana-50 ring-2 ring-banana-200' 
+                : 'border-gray-100 bg-gray-50 hover:border-gray-200'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles size={18} className={mode === 'reconstructed' ? 'text-banana-600' : 'text-gray-400'} />
+              <span className="font-semibold">重构转换</span>
+            </div>
+            <p className="text-xs text-gray-500">根据风格模板重绘每一页，实现整体风格统一</p>
+          </button>
         </div>
 
         {/* 文件上传区 */}
         {!file ? (
           <div 
-            className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-banana-400 transition-colors cursor-pointer"
+            className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center hover:border-banana-400 transition-colors cursor-pointer bg-gray-50/50"
             onClick={() => fileInputRef.current?.click()}
           >
             <input
@@ -144,44 +154,106 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
               onChange={handleFileSelect}
             />
             <div className="flex flex-col items-center gap-3">
-              <div className="w-12 h-12 bg-banana-50 rounded-full flex items-center justify-center text-banana-600">
-                <Upload size={24} />
+              <div className="w-14 h-14 bg-banana-100 rounded-full flex items-center justify-center text-banana-600">
+                <Upload size={28} />
               </div>
               <div>
-                <p className="font-medium text-gray-700">点击上传 PDF</p>
-                <p className="text-sm text-gray-500 mt-1">支持 .pdf 格式</p>
+                <p className="font-semibold text-gray-700 text-lg">点击或拖拽上传 PDF</p>
+                <p className="text-sm text-gray-500 mt-1">AI 将自动分页并处理</p>
               </div>
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex items-center justify-between p-4 bg-white rounded-xl border-2 border-banana-200 shadow-sm">
             <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center text-red-600 flex-shrink-0">
-                <FileText size={20} />
+              <div className="w-12 h-12 bg-red-50 rounded-lg flex items-center justify-center text-red-500 flex-shrink-0">
+                <FileText size={24} />
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                <p className="text-sm font-bold text-gray-900 truncate">{file.name}</p>
                 <p className="text-xs text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
               </div>
             </div>
             <button
               onClick={removeFile}
-              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
               disabled={isProcessing}
             >
-              <X size={18} />
+              <X size={20} />
             </button>
           </div>
         )}
 
-        {isProcessing && (
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs text-gray-500">
-              <span>{progressMessage}</span>
-              <span className="animate-pulse">...</span>
+        {/* 重构模式下的风格输入 */}
+        {mode === 'reconstructed' && (
+          <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+            <label className="block text-sm font-semibold text-gray-700">
+              设置风格模板 <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              placeholder="请输入您希望重构后的 PPT 风格描述（如：简约现代，配色以深蓝为主，配合明亮的橙色点缀...）"
+              value={templateStyle}
+              onChange={(e) => setTemplateStyle(e.target.value)}
+              rows={3}
+              className="border-2 focus:border-banana-400"
+            />
+          </div>
+        )}
+
+        {/* 高级设置开关 */}
+        <div className="pt-2">
+          <button 
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-banana-600 transition-colors"
+          >
+            <Settings size={16} />
+            {showAdvanced ? '隐藏高级设置' : '高级设置'}
+          </button>
+        </div>
+
+        {showAdvanced && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-xl border border-gray-200 animate-in fade-in zoom-in-95 duration-200">
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">
+                PDF 图片分辨率
+              </label>
+              <select
+                value={resolution}
+                onChange={(e) => setResolution(e.target.value as '1K' | '2K')}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-banana-500 focus:border-banana-500"
+              >
+                <option value="1K">1K (标准)</option>
+                <option value="2K">2K (高清)</option>
+              </select>
             </div>
-            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full bg-banana-500 rounded-full animate-progress-indeterminate"></div>
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">
+                背景修复模式
+              </label>
+              <select
+                value={inpaintMethod}
+                onChange={(e) => setInpaintMethod(e.target.value as ExportInpaintMethod)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-banana-500 focus:border-banana-500"
+              >
+                <option value="local">本地 LAMA (推荐)</option>
+                <option value="hybrid">混合修复 (百度+AI)</option>
+                <option value="baidu">极速修复 (百度)</option>
+                <option value="generative">画质重绘 (AI模型)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">
+                版面分析模式
+              </label>
+              <select
+                value={extractorMethod}
+                onChange={(e) => setExtractorMethod(e.target.value as ExportExtractorMethod)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-banana-500 focus:border-banana-500"
+              >
+                <option value="hybrid">混合模式 (百度OCR+分析)</option>
+                <option value="mineru">快速模式 (MinerU)</option>
+                <option value="local">本地 OCR 模式</option>
+              </select>
             </div>
           </div>
         )}
@@ -193,8 +265,9 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
             onClick={handleSubmit}
             disabled={!file || isProcessing}
             loading={isProcessing}
+            className="px-8 shadow-yellow"
           >
-            {isProcessing ? '处理中...' : '开始生成'}
+            {isProcessing ? '处理中...' : '开始转换'}
           </Button>
         </div>
       </div>

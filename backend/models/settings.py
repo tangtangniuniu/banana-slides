@@ -40,6 +40,9 @@ class Settings(db.Model):
     use_local_ocr_inpaint = db.Column(db.Boolean, nullable=False, default=False)  # 是否使用本地 OCR 和 Inpaint
     local_ocr_url = db.Column(db.String(500), nullable=True, default='http://127.0.0.1:8000/ocr')  # 本地 OCR URL
     local_inpaint_url = db.Column(db.String(500), nullable=True, default='http://127.0.0.1:8000/inpaint')  # 本地 Inpaint URL
+    
+    # 文本样式提取模式
+    text_style_extraction_mode = db.Column(db.String(20), nullable=False, default='local_cv')  # ai, local_cv, none
 
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

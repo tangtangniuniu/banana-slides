@@ -1175,3 +1175,199 @@ def convert_images_to_ppt(project_id):
         db.session.rollback()
         logger.error(f"convert_images_to_ppt failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+def _split_pdf_to_images(pdf_path, output_dir, resolution='2K'):
+    """Split PDF to images using pdf2image"""
+    from pdf2image import convert_from_path
+    import os
+
+    # Calculate target width
+    # 1K = 960 width (approx), 2K = 1920 width
+    target_width = 1920
+    if resolution == '1K':
+        target_width = 960
+    elif resolution == '4K':
+        target_width = 3840
+
+    # We use size=width to resize while maintaining aspect ratio
+    # pdf2image uses 'size' parameter which can be a tuple or int (width)
+    # If size is None, original size is used.
+
+    logger.info(f"Splitting PDF {pdf_path} with resolution {resolution} (width={target_width})")
+
+    # convert_from_path returns a list of PIL images
+    try:
+        images = convert_from_path(pdf_path, size=target_width, thread_count=4)
+    except Exception as e:
+        logger.error(f"pdf2image failed: {e}")
+        # Check if poppler is installed
+        raise RuntimeError("PDF conversion failed. Ensure poppler-utils is installed.") from e
+
+    image_paths = []
+    for i, image in enumerate(images):
+        filename = f"page_{i+1}.png"
+        image_path = os.path.join(output_dir, filename)
+        image.save(image_path, "PNG")
+        image_paths.append(image_path)
+
+    return image_paths
+
+
+@project_bp.route('/<project_id>/convert-pdf', methods=['POST'])
+def convert_pdf_to_ppt(project_id):
+    """
+    POST /api/projects/{project_id}/convert-pdf - Convert PDF to PPTX
+
+    Multipart/form-data:
+    - pdf_file: PDF file (key: 'file')
+    - mode: 'original' or 'reconstructed' (default: 'original')
+    - resolution: '1K', '2K' (default: '2K')
+    - template_style: string (required if mode is 'reconstructed')
+    - filename: output filename
+    - extractor_method: 'hybrid' or 'mineru' (for original mode)
+    - inpaint_method: 'hybrid', 'baidu', 'generative' (for original mode)
+    """
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+
+        if 'file' not in request.files:
+            return bad_request("No PDF file provided")
+
+        pdf_file = request.files['file']
+        if not pdf_file or not pdf_file.filename.lower().endswith('.pdf'):
+            return bad_request("Invalid file type")
+
+        # Get parameters
+        mode = request.form.get('mode', 'original')
+        resolution = request.form.get('resolution', '2K')
+        template_style = request.form.get('template_style', '')
+        filename = request.form.get('filename', f'pdf_converted_{project_id}.pptx')
+
+        if mode == 'reconstructed' and not template_style:
+            # If no style provided, check project settings
+            template_style = project.template_style
+            if not template_style:
+                return bad_request("Template style is required for reconstructed mode")
+
+        # Save PDF temporarily
+        import os
+        import tempfile
+        from services import FileService
+
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            pdf_path = tmp.name
+            pdf_file.save(pdf_path)
+
+        try:
+            # Create temp dir for images
+            with tempfile.TemporaryDirectory() as temp_img_dir:
+                # Split PDF
+                try:
+                    image_paths = _split_pdf_to_images(pdf_path, temp_img_dir, resolution)
+                except Exception as e:
+                    return error_response('PDF_CONVERSION_ERROR', str(e), 500)
+
+                # Create pages and save images
+                new_page_ids = []
+                max_order = db.session.query(db.func.max(Page.order_index)).filter_by(project_id=project_id).scalar()
+                current_order = (max_order if max_order is not None else -1) + 1
+
+                from PIL import Image as PILImage
+
+                for img_path in image_paths:
+                    page = Page(
+                        project_id=project_id,
+                        order_index=current_order,
+                        status='COMPLETED'
+                    )
+                    page.set_outline_content({"title": f"Page {current_order+1}", "points": ["From PDF"]})
+                    page.set_description_content({"text": "Imported from PDF"})
+
+                    db.session.add(page)
+                    db.session.flush()
+
+                    # Save image using file service (creates version 1)
+                    with PILImage.open(img_path) as img:
+                        save_image_with_version(
+                            img, project_id, page.id, file_service, page_obj=page, image_format='PNG'
+                        )
+
+                    new_page_ids.append(page.id)
+                    current_order += 1
+
+                db.session.commit()
+
+                # Create Task
+                task = Task(
+                    project_id=project_id,
+                    task_type='CONVERT_PDF',
+                    status='PENDING'
+                )
+                db.session.add(task)
+                db.session.commit()
+
+                app = current_app._get_current_object()
+
+                if mode == 'reconstructed':
+                    # Submit reconstruction task (with export)
+                    export_options = {
+                        'filename': filename,
+                        'export_extractor_method': request.form.get('extractor_method', 'hybrid'),
+                        'export_inpaint_method': request.form.get('inpaint_method', 'hybrid')
+                    }
+
+                    # Also use AI Service
+                    ai_service = get_ai_service()
+
+                    task_manager.submit_task(
+                        task.id,
+                        reconstruct_pdf_pages_task,
+                        project_id=project_id,
+                        page_ids=new_page_ids,
+                        style_prompt=template_style,
+                        ai_service=ai_service,
+                        file_service=file_service,
+                        aspect_ratio=current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
+                        resolution=resolution,
+                        export_options=export_options,
+                        app=app
+                    )
+
+                else:
+                    # Submit standard export task (original mode)
+                    # "1.1. 原始转换：对原始pdf进行分页，提取图片，然后转为可编辑pptx"
+                    # This is exactly what export_editable_pptx... does with the images we just saved.
+                    task_manager.submit_task(
+                        task.id,
+                        export_editable_pptx_with_recursive_analysis_task,
+                        project_id=project_id,
+                        filename=filename,
+                        file_service=file_service,
+                        page_ids=new_page_ids,
+                        max_depth=2,
+                        max_workers=4,
+                        export_extractor_method=request.form.get('extractor_method', 'hybrid'),
+                        export_inpaint_method=request.form.get('inpaint_method', 'hybrid'),
+                        save_analysis=True,
+                        app=app
+                    )
+
+                return success_response({
+                    'task_id': task.id,
+                    'page_ids': new_page_ids,
+                    'message': f'Started converting PDF ({len(new_page_ids)} pages)'
+                }, status_code=202)
+
+        finally:
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"convert_pdf_to_ppt failed: {str(e)}", exc_info=True)
+        return error_response('SERVER_ERROR', str(e), 500)

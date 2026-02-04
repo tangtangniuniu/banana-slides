@@ -143,6 +143,7 @@ export interface Settings {
   use_local_ocr_inpaint: boolean;
   local_ocr_url?: string;
   local_inpaint_url?: string;
+  text_style_extraction_mode: 'ai' | 'local_cv' | 'none';
   created_at?: string;
   updated_at?: string;
 }

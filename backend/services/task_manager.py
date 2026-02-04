@@ -1098,3 +1098,211 @@ def export_editable_pptx_with_recursive_analysis_task(
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()
                 db.session.commit()
+
+
+def reconstruct_pdf_pages_task(
+    task_id: str,
+    project_id: str,
+    page_ids: List[str],
+    style_prompt: str,
+    ai_service,
+    file_service,
+    aspect_ratio: str = "16:9",
+    resolution: str = "2K",
+    export_options: Dict = None,
+    app=None
+):
+    """
+    Background task for reconstructing PDF pages using AI generation and optionally exporting
+    """
+    if app is None:
+        raise ValueError("Flask app instance must be provided")
+        
+    with app.app_context():
+        try:
+            task = Task.query.get(task_id)
+            if not task:
+                return
+            
+            task.status = 'PROCESSING'
+            reconstruct_weight = 50 if export_options else 100
+            
+            task.set_progress({
+                "total": 100,
+                "completed": 0,
+                "failed": 0,
+                "current_step": "正在重构页面...",
+                "percent": 0
+            })
+            db.session.commit()
+            
+            completed = 0
+            failed = 0
+            total_pages = len(page_ids)
+            
+            max_workers = 4
+            
+            def process_page(page_id):
+                with app.app_context():
+                    try:
+                        page = Page.query.get(page_id)
+                        if not page:
+                            return False, f"Page {page_id} not found"
+                        
+                        original_version = PageImageVersion.query.filter_by(
+                            page_id=page_id, 
+                            version_number=1
+                        ).first()
+                        
+                        ref_image_path = None
+                        if original_version and original_version.image_path:
+                            abs_path = file_service.get_absolute_path(original_version.image_path)
+                            if os.path.exists(abs_path):
+                                ref_image_path = abs_path
+                        
+                        if not ref_image_path and page.generated_image_path:
+                            abs_path = file_service.get_absolute_path(page.generated_image_path)
+                            if os.path.exists(abs_path):
+                                ref_image_path = abs_path
+                        
+                        if not ref_image_path:
+                            return False, "Original reference image not found"
+                        
+                        prompt = f"Redesign this presentation slide. Keep the content and layout structure but apply the following style:\n\n{style_prompt}\n\nMake it professional and visually appealing."
+                        
+                        image = ai_service.generate_image(
+                            prompt=prompt,
+                            ref_image_path=ref_image_path,
+                            aspect_ratio=aspect_ratio,
+                            resolution=resolution
+                        )
+                        
+                        if not image:
+                            return False, "Image generation failed"
+                        
+                        image_format = app.config.get('IMAGE_FORMAT', 'PNG')
+                        save_image_with_version(
+                            image, project_id, page_id, file_service, page_obj=page,
+                            image_format=image_format
+                        )
+                        
+                        return True, None
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to reconstruct page {page_id}: {e}")
+                        return False, str(e)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(process_page, pid): pid for pid in page_ids}
+                
+                for future in as_completed(futures):
+                    pid = futures[future]
+                    success, error = future.result()
+                    
+                    if success:
+                        completed += 1
+                    else:
+                        failed += 1
+                    
+                    percent = int((completed / total_pages) * reconstruct_weight)
+                    task.set_progress({
+                        "total": 100,
+                        "completed": percent,
+                        "failed": failed,
+                        "current_step": f"重构页面 {completed}/{total_pages}",
+                        "percent": percent
+                    })
+                    db.session.commit()
+            
+            if export_options and failed < total_pages:
+                from services.export_service import ExportService
+                from services.image_editability import ServiceConfig, ImageEditabilityService, TextAttributeExtractorFactory
+                
+                filename = export_options.get('filename', f'reconstructed_{project_id}.pptx')
+                exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
+                os.makedirs(exports_dir, exist_ok=True)
+                output_path = os.path.join(exports_dir, filename)
+                
+                current_image_paths = []
+                pages = get_filtered_pages(project_id, page_ids)
+                for page in pages:
+                    if page.generated_image_path:
+                        img_path = file_service.get_absolute_path(page.generated_image_path)
+                        if os.path.exists(img_path):
+                            current_image_paths.append(img_path)
+                
+                def export_progress_callback(step: str, message: str, p: int):
+                    actual_percent = reconstruct_weight + int(p * (100 - reconstruct_weight) / 100)
+                    task.set_progress({
+                        "total": 100,
+                        "completed": actual_percent,
+                        "failed": failed,
+                        "current_step": f"导出: {message}",
+                        "percent": actual_percent
+                    })
+                    db.session.commit()
+                
+                config = ServiceConfig.from_defaults(
+                    upload_folder=app.config.get('UPLOAD_FOLDER'),
+                    extractor_method=export_options.get('export_extractor_method', 'hybrid'),
+                    inpaint_method=export_options.get('export_inpaint_method', 'hybrid'),
+                    max_depth=export_options.get('max_depth', 2),
+                    use_local_ocr_inpaint=app.config.get('USE_LOCAL_OCR_INPAINT', False),
+                    local_ocr_url=app.config.get('LOCAL_OCR_URL'),
+                    local_inpaint_url=app.config.get('LOCAL_INPAINT_URL')
+                )
+                editability_service = ImageEditabilityService(config)
+                
+                editable_images = [None] * len(current_image_paths)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(editability_service.make_image_editable, img_path): idx
+                        for idx, img_path in enumerate(current_image_paths)
+                    }
+                    
+                    for future in as_completed(futures):
+                        idx = futures[future]
+                        try:
+                            editable_images[idx] = future.result()
+                        except Exception as e:
+                            logger.error(f"Analysis failed for {current_image_paths[idx]}: {e}")
+                
+                text_style_mode = app.config.get('TEXT_STYLE_EXTRACTION_MODE', 'local_cv')
+                registry = TextAttributeExtractorFactory.create_text_attribute_registry(
+                    ai_service=ai_service,
+                    mode=text_style_mode
+                )
+                text_attribute_extractor = registry.get_extractor(None)
+                
+                _, export_warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+                    image_paths=None,
+                    editable_images=editable_images,
+                    output_file=output_path,
+                    text_attribute_extractor=text_attribute_extractor,
+                    progress_callback=export_progress_callback
+                )
+                
+                download_path = f"/files/{project_id}/exports/{filename}"
+                task.set_progress({
+                    "total": 100,
+                    "completed": 100,
+                    "failed": failed,
+                    "current_step": "✓ 完成",
+                    "percent": 100,
+                    "download_url": download_path,
+                    "filename": filename
+                })
+                db.session.commit()
+            
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+            
+        except Exception as e:
+            logger.error(f"Task {task_id} failed: {e}", exc_info=True)
+            task = Task.query.get(task_id)
+            if task:
+                task.status = 'FAILED'
+                task.error_message = str(e)
+                task.completed_at = datetime.utcnow()
+                db.session.commit()

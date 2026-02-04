@@ -62,6 +62,7 @@ const initialFormData = {
   use_local_ocr_inpaint: false,
   local_ocr_url: 'http://127.0.0.1:8000/ocr',
   local_inpaint_url: 'http://127.0.0.1:8000/inpaint',
+  text_style_extraction_mode: 'local_cv' as 'ai' | 'local_cv' | 'none',
 };
 
 // 配置驱动的表单区块定义
@@ -290,6 +291,17 @@ const settingsSections: SectionConfig[] = [
         placeholder: 'http://127.0.0.1:8000/inpaint',
         description: '本地 Inpaint REST 接口地址',
       },
+      {
+        key: 'text_style_extraction_mode',
+        label: '文本样式提取模式',
+        type: 'select',
+        description: '选择如何从图片中提取文本样式（颜色、粗体等）',
+        options: [
+          { value: 'local_cv', label: '本地 CV (快速但基础)' },
+          { value: 'ai', label: 'AI 模型 (精准但慢)' },
+          { value: 'none', label: '不提取' },
+        ],
+      },
     ],
   },
 ];
@@ -338,6 +350,7 @@ export const Settings: React.FC = () => {
           use_local_ocr_inpaint: response.data.use_local_ocr_inpaint || false,
           local_ocr_url: response.data.local_ocr_url || 'http://127.0.0.1:8000/ocr',
           local_inpaint_url: response.data.local_inpaint_url || 'http://127.0.0.1:8000/inpaint',
+          text_style_extraction_mode: response.data.text_style_extraction_mode || 'local_cv',
         });
       }
     } catch (error: any) {
@@ -418,9 +431,10 @@ export const Settings: React.FC = () => {
               enable_image_reasoning: response.data.enable_image_reasoning || false,
               image_thinking_budget: response.data.image_thinking_budget || 1024,
               baidu_ocr_api_key: '',
-              use_local_ocr_inpaint: response.data.use_local_ocr_inpaint || false,
+              use_local_ocr_inpaint: false,
               local_ocr_url: response.data.local_ocr_url || 'http://127.0.0.1:8000/ocr',
               local_inpaint_url: response.data.local_inpaint_url || 'http://127.0.0.1:8000/inpaint',
+              text_style_extraction_mode: 'local_cv',
             });
             show({ message: '设置已重置', type: 'success' });
           }
@@ -474,6 +488,7 @@ export const Settings: React.FC = () => {
       if (formData.image_resolution) testSettings.image_resolution = formData.image_resolution;
       if (formData.local_ocr_url) testSettings.local_ocr_url = formData.local_ocr_url;
       if (formData.local_inpaint_url) testSettings.local_inpaint_url = formData.local_inpaint_url;
+      if (formData.text_style_extraction_mode) testSettings.text_style_extraction_mode = formData.text_style_extraction_mode;
 
       // 推理模式设置
       if (formData.enable_text_reasoning !== undefined) {
