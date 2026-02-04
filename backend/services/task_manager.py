@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Dict, Any
 from datetime import datetime
 from sqlalchemy import func
-from models import db, Task, Page, Material, PageImageVersion
+from models import db, Task, Page, Material, PageImageVersion, Settings
+from services.ai_service import AIService
 from utils import get_filtered_pages
 from pathlib import Path
 
@@ -960,10 +961,25 @@ def export_editable_pptx_with_recursive_analysis_task(
             logger.info(f"Step 2: 执行图片分析 (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
             progress_callback("分析", "初始化分析服务...", 5)
             
+            # 获取全局设置
+            settings = Settings.get_settings()
+            
+            # 初始化AI服务
+            ai_service = AIService()
+            
+            # 2. 初始化服务配置
+            from services.image_editability.factories import ServiceConfig
             config = ServiceConfig.from_defaults(
-                max_depth=max_depth,
+                mineru_token=settings.mineru_token,
+                mineru_api_base=settings.mineru_api_base,
+                upload_folder=app.config.get('UPLOAD_FOLDER'),
+                ai_service=ai_service,
                 extractor_method=export_extractor_method,
-                inpaint_method=export_inpaint_method
+                inpaint_method=export_inpaint_method,
+                max_depth=max_depth,
+                use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
+                local_ocr_url=settings.local_ocr_url,
+                local_inpaint_url=settings.local_inpaint_url
             )
             editability_service = ImageEditabilityService(config)
             
@@ -1007,7 +1023,19 @@ def export_editable_pptx_with_recursive_analysis_task(
                         logger.error(f"Failed to save analysis for page {page.id}: {e}")
 
             # Step 3: 创建文字属性提取器
-            text_attribute_extractor = TextAttributeExtractorFactory.create_caption_model_extractor()
+            # 获取提取模式配置
+            text_style_mode = app.config.get('TEXT_STYLE_EXTRACTION_MODE', 'local_cv')
+            
+            # 使用 Registry 工厂方法创建
+            registry = TextAttributeExtractorFactory.create_text_attribute_registry(
+                ai_service=ai_service,
+                mode=text_style_mode
+            )
+            
+            # 由于 ExportService 目前接受 TextAttributeExtractor 接口而不是 Registry，
+            # 我们暂时传递默认提取器。
+            # TODO: 升级 ExportService 以支持 Registry
+            text_attribute_extractor = registry.get_extractor(None)
             
             # Step 4: 生成PPTX
             logger.info("Step 4: 生成PPTX...")

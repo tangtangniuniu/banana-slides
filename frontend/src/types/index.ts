@@ -51,10 +51,10 @@ export interface Page {
 }
 
 // 导出设置 - 组件提取方法
-export type ExportExtractorMethod = 'mineru' | 'hybrid';
+export type ExportExtractorMethod = 'mineru' | 'hybrid' | 'local';
 
 // 导出设置 - 背景图获取方法
-export type ExportInpaintMethod = 'generative' | 'baidu' | 'hybrid';
+export type ExportInpaintMethod = 'generative' | 'baidu' | 'hybrid' | 'local';
 
 // 项目
 export interface Project {
@@ -140,6 +140,9 @@ export interface Settings {
   image_thinking_budget: number;
   baidu_ocr_api_key_length: number;
   image_format: 'PNG' | 'JPG' | 'WEBP';
+  use_local_ocr_inpaint: boolean;
+  local_ocr_url?: string;
+  local_inpaint_url?: string;
   created_at?: string;
   updated_at?: string;
 }

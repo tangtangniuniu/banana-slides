@@ -6,6 +6,7 @@ Supports two modes:
 - Vertex AI: Uses GCP service account authentication
 """
 import logging
+import time
 from typing import Optional, List
 from google import genai
 from google.genai import types
@@ -68,7 +69,7 @@ class GenAIImageProvider(ImageProvider):
 
     @retry(
         stop=stop_after_attempt(get_config().GENAI_MAX_RETRIES + 1),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
         reraise=True
     )
     def generate_image(
@@ -126,13 +127,15 @@ class GenAIImageProvider(ImageProvider):
                     include_thoughts=True  
                 )
             
+            start_time = time.time()
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=types.GenerateContentConfig(**config_params)
             )
+            duration = time.time() - start_time
             
-            logger.debug("GenAI API call completed")
+            logger.info(f"GenAI API call completed in {duration:.2f} seconds")
             
             # Extract the final image from the response.
             # Earlier images are usually low resolution drafts 

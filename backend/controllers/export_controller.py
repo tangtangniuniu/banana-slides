@@ -337,10 +337,10 @@ def export_editable_pptx(project_id):
         export_inpaint_method = data.get('inpaint_method') or project.export_inpaint_method or 'hybrid'
         
         # 验证参数有效性
-        if export_extractor_method not in ['mineru', 'hybrid']:
+        if export_extractor_method not in ['mineru', 'hybrid', 'local']:
             export_extractor_method = 'hybrid'
         
-        if export_inpaint_method not in ['generative', 'baidu', 'hybrid']:
+        if export_inpaint_method not in ['generative', 'baidu', 'hybrid', 'local']:
             export_inpaint_method = 'hybrid'
             
         logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}")

@@ -21,6 +21,8 @@ dependencies = [
     "alembic>=1.13.0",
     "flask-migrate>=4.0.0",
     "img2pdf>=0.5.1",
+    "opencv-python>=4.13.0.90",
+    "pdf2image>=1.17.0",
 ]
 
 [project.optional-dependencies]

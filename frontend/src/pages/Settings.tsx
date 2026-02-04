@@ -59,6 +59,9 @@ const initialFormData = {
   enable_image_reasoning: false,
   image_thinking_budget: 1024,
   baidu_ocr_api_key: '',
+  use_local_ocr_inpaint: false,
+  local_ocr_url: 'http://127.0.0.1:8000/ocr',
+  local_inpaint_url: 'http://127.0.0.1:8000/inpaint',
 };
 
 // 配置驱动的表单区块定义
@@ -263,6 +266,32 @@ const settingsSections: SectionConfig[] = [
       },
     ],
   },
+  {
+    title: '本地 OCR & Inpaint 配置',
+    icon: <Zap size={20} />,
+    fields: [
+      {
+        key: 'use_local_ocr_inpaint',
+        label: '使用本地服务',
+        type: 'switch',
+        description: '开启后，可编辑 PPTX 导出将优先使用本地 OCR 和 Inpaint 服务，不再使用 MinerU 和百度接口',
+      },
+      {
+        key: 'local_ocr_url',
+        label: '本地 OCR 服务 URL',
+        type: 'text',
+        placeholder: 'http://127.0.0.1:8000/ocr',
+        description: '本地 OCR REST 接口地址',
+      },
+      {
+        key: 'local_inpaint_url',
+        label: '本地 Inpaint 服务 URL',
+        type: 'text',
+        placeholder: 'http://127.0.0.1:8000/inpaint',
+        description: '本地 Inpaint REST 接口地址',
+      },
+    ],
+  },
 ];
 
 // Settings 组件 - 纯嵌入模式（可复用）
@@ -306,6 +335,9 @@ export const Settings: React.FC = () => {
           enable_image_reasoning: response.data.enable_image_reasoning || false,
           image_thinking_budget: response.data.image_thinking_budget || 1024,
           baidu_ocr_api_key: '',
+          use_local_ocr_inpaint: response.data.use_local_ocr_inpaint || false,
+          local_ocr_url: response.data.local_ocr_url || 'http://127.0.0.1:8000/ocr',
+          local_inpaint_url: response.data.local_inpaint_url || 'http://127.0.0.1:8000/inpaint',
         });
       }
     } catch (error: any) {
@@ -386,6 +418,9 @@ export const Settings: React.FC = () => {
               enable_image_reasoning: response.data.enable_image_reasoning || false,
               image_thinking_budget: response.data.image_thinking_budget || 1024,
               baidu_ocr_api_key: '',
+              use_local_ocr_inpaint: response.data.use_local_ocr_inpaint || false,
+              local_ocr_url: response.data.local_ocr_url || 'http://127.0.0.1:8000/ocr',
+              local_inpaint_url: response.data.local_inpaint_url || 'http://127.0.0.1:8000/inpaint',
             });
             show({ message: '设置已重置', type: 'success' });
           }
@@ -437,6 +472,8 @@ export const Settings: React.FC = () => {
       if (formData.mineru_token) testSettings.mineru_token = formData.mineru_token;
       if (formData.baidu_ocr_api_key) testSettings.baidu_ocr_api_key = formData.baidu_ocr_api_key;
       if (formData.image_resolution) testSettings.image_resolution = formData.image_resolution;
+      if (formData.local_ocr_url) testSettings.local_ocr_url = formData.local_ocr_url;
+      if (formData.local_inpaint_url) testSettings.local_inpaint_url = formData.local_inpaint_url;
 
       // 推理模式设置
       if (formData.enable_text_reasoning !== undefined) {
@@ -685,6 +722,20 @@ export const Settings: React.FC = () => {
                 description: '上传测试 PDF 并等待解析结果返回',
                 action: api.testMineruPdf,
                 formatDetail: (data: any) => (data?.content_preview ? `解析预览：${data.content_preview}` : ''),
+              },
+              {
+                key: 'local-ocr',
+                title: '本地 OCR 服务',
+                description: '测试本地 OCR 接口，验证文字识别功能',
+                action: (settings) => api.runSettingsTest('local-ocr', settings),
+                formatDetail: (data: any) => (data?.elements_count ? `识别到 ${data.elements_count} 个元素｜预览：${data.preview_text}` : ''),
+              },
+              {
+                key: 'local-inpaint',
+                title: '本地 Inpaint 服务',
+                description: '测试本地 Inpaint 接口，验证图像修复功能',
+                action: (settings) => api.runSettingsTest('local-inpaint', settings),
+                formatDetail: (data: any) => (data?.image_size ? `输出尺寸：${data.image_size[0]}x${data.image_size[1]}` : ''),
               },
             ].map((item) => {
               const testState = serviceTestStates[item.key] || { status: 'idle' as TestStatus };

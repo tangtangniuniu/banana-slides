@@ -251,6 +251,22 @@ def update_settings():
         if "baidu_ocr_api_key" in data:
             settings.baidu_ocr_api_key = data["baidu_ocr_api_key"] or None
 
+        # Update Local OCR and Inpaint configuration
+        if "use_local_ocr_inpaint" in data:
+            settings.use_local_ocr_inpaint = bool(data["use_local_ocr_inpaint"])
+        
+        if "local_ocr_url" in data:
+            settings.local_ocr_url = data["local_ocr_url"] or 'http://127.0.0.1:8000/ocr'
+            
+        if "local_inpaint_url" in data:
+            settings.local_inpaint_url = data["local_inpaint_url"] or 'http://127.0.0.1:8000/inpaint'
+
+        if "text_style_extraction_mode" in data:
+            mode = data["text_style_extraction_mode"]
+            if mode not in ["ai", "local_cv", "none"]:
+                return bad_request("Text style extraction mode must be 'ai', 'local_cv', or 'none'")
+            settings.text_style_extraction_mode = mode
+
         settings.updated_at = datetime.now(timezone.utc)
         db.session.commit()
 
@@ -308,6 +324,10 @@ def reset_settings():
         settings.enable_image_reasoning = False
         settings.image_thinking_budget = 1024
         settings.baidu_ocr_api_key = Config.BAIDU_OCR_API_KEY or None
+        settings.use_local_ocr_inpaint = False
+        settings.local_ocr_url = 'http://127.0.0.1:8000/ocr'
+        settings.local_inpaint_url = 'http://127.0.0.1:8000/inpaint'
+        settings.text_style_extraction_mode = 'local_cv'
         settings.image_resolution = Config.DEFAULT_RESOLUTION
         settings.image_aspect_ratio = Config.DEFAULT_ASPECT_RATIO
         settings.image_format = Config.IMAGE_FORMAT
@@ -532,6 +552,12 @@ def _sync_settings_to_config(settings: Settings):
         current_app.config["BAIDU_OCR_API_KEY"] = settings.baidu_ocr_api_key
         logger.info("Updated BAIDU_OCR_API_KEY from settings")
     
+    # Sync Local OCR and Inpaint settings
+    current_app.config["USE_LOCAL_OCR_INPAINT"] = settings.use_local_ocr_inpaint
+    current_app.config["LOCAL_OCR_URL"] = settings.local_ocr_url
+    current_app.config["LOCAL_INPAINT_URL"] = settings.local_inpaint_url
+    current_app.config["TEXT_STYLE_EXTRACTION_MODE"] = settings.text_style_extraction_mode
+    
     # Clear AI service cache if AI-related configuration changed
     if ai_config_changed:
         try:
@@ -645,6 +671,76 @@ def run_settings_test(test_name: str):
                             image_dir.rmdir()
                         except OSError:
                             pass
+
+            elif test_name == "local-ocr":
+                local_ocr_url = test_settings.get("local_ocr_url") or current_app.config.get("LOCAL_OCR_URL") or 'http://127.0.0.1:8000/ocr'
+                
+                # 创建临时目录
+                upload_folder = Path(current_app.config.get("UPLOAD_FOLDER", Config.UPLOAD_FOLDER))
+                test_dir = upload_folder / "test_local_ocr"
+                test_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    from services.image_editability.local_providers import LocalOCRElementExtractor
+                    extractor = LocalOCRElementExtractor(local_ocr_url, test_dir)
+                    
+                    test_image_path = _get_test_image_path()
+                    result = extractor.extract(str(test_image_path))
+                    
+                    if not result.elements:
+                        return error_response(
+                            "LOCAL_OCR_TEST_FAILED",
+                            "本地 OCR 未识别到任何元素，请检查服务状态和接口地址",
+                            502
+                        )
+                        
+                    return success_response(
+                        {
+                            "elements_count": len(result.elements),
+                            "preview_text": result.elements[0].get("content", "")[:50] if result.elements else ""
+                        },
+                        "本地 OCR 测试成功"
+                    )
+                finally:
+                    # 清理测试目录
+                    if test_dir.exists():
+                        shutil.rmtree(test_dir)
+
+            elif test_name == "local-inpaint":
+                local_inpaint_url = test_settings.get("local_inpaint_url") or current_app.config.get("LOCAL_INPAINT_URL") or 'http://127.0.0.1:8000/inpaint'
+                
+                # 创建临时目录
+                upload_folder = Path(current_app.config.get("UPLOAD_FOLDER", Config.UPLOAD_FOLDER))
+                test_dir = upload_folder / "test_local_inpaint"
+                test_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    from services.image_editability.local_providers import LocalInpaintProvider
+                    provider = LocalInpaintProvider(local_inpaint_url, test_dir)
+                    
+                    test_image_path = _get_test_image_path()
+                    with Image.open(test_image_path) as image:
+                        # 模拟一个中心区域的 bbox 进行修复
+                        width, height = image.size
+                        bbox = (width*0.3, height*0.3, width*0.7, height*0.7)
+                        
+                        result_image = provider.inpaint_regions(image, [bbox], image_id="test_inpaint")
+                        
+                    if result_image is None:
+                        return error_response(
+                            "LOCAL_INPAINT_TEST_FAILED",
+                            "本地 Inpaint 返回空结果，请检查服务状态和接口地址",
+                            502
+                        )
+                        
+                    return success_response(
+                        {"image_size": result_image.size},
+                        "本地 Inpaint 测试成功"
+                    )
+                finally:
+                    # 清理测试目录
+                    if test_dir.exists():
+                        shutil.rmtree(test_dir)
 
             elif test_name == "baidu-inpaint":
                 api_key = current_app.config.get("BAIDU_OCR_API_KEY") or Config.BAIDU_OCR_API_KEY

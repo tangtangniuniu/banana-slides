@@ -39,6 +39,11 @@ const EXTRACTOR_METHOD_OPTIONS: { value: ExportExtractorMethod; label: string; d
     label: 'MinerU提取', 
     description: '仅使用MinerU进行版面分析和文字识别' 
   },
+  { 
+    value: 'local', 
+    label: '本地模式 (Local)', 
+    description: '使用配置的本地 OCR 接口，无需 MinerU，速度最快' 
+  },
 ];
 
 // 背景图获取方法选项
@@ -59,6 +64,12 @@ const INPAINT_METHOD_OPTIONS: { value: ExportInpaintMethod; label: string; descr
     value: 'baidu', 
     label: '百度抹除服务获取', 
     description: '使用百度图像修复API，速度快但画质一般',
+    usesAI: false 
+  },
+  { 
+    value: 'local', 
+    label: '本地模式 (Local)', 
+    description: '使用配置的本地 Inpaint 接口，完全离线处理',
     usesAI: false 
   },
 ];

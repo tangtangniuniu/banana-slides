@@ -47,7 +47,7 @@ class InpaintProvider(ABC):
             image: 原始PIL图像对象
             bboxes: 边界框列表，每个bbox格式为 (x0, y0, x1, y1)
             types: 可选的元素类型列表，与bboxes一一对应（如 'text', 'image', 'table'等）
-            **kwargs: 其他由具体实现自定义的参数
+            **kwargs: 其他由具体实现自定义的参数，如 polys (多边形信息)
         
         Returns:
             处理后的PIL图像对象，失败返回None

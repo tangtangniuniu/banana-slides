@@ -19,6 +19,7 @@ from services.task_manager import (
     generate_descriptions_task,
     generate_images_task,
     export_editable_pptx_with_recursive_analysis_task,
+    reconstruct_pdf_pages_task,
     save_image_with_version
 )
 from utils import (

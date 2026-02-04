@@ -36,6 +36,11 @@ class Settings(db.Model):
     baidu_ocr_api_key = db.Column(db.String(500), nullable=True)  # 百度 OCR API Key
     image_format = db.Column(db.String(10), nullable=False, default='PNG')  # 图片格式: PNG, JPG, WEBP
     
+    # 本地 OCR 和 Inpaint 配置
+    use_local_ocr_inpaint = db.Column(db.Boolean, nullable=False, default=False)  # 是否使用本地 OCR 和 Inpaint
+    local_ocr_url = db.Column(db.String(500), nullable=True, default='http://127.0.0.1:8000/ocr')  # 本地 OCR URL
+    local_inpaint_url = db.Column(db.String(500), nullable=True, default='http://127.0.0.1:8000/inpaint')  # 本地 Inpaint URL
+
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -62,6 +67,10 @@ class Settings(db.Model):
             'image_thinking_budget': self.image_thinking_budget,
             'baidu_ocr_api_key_length': len(self.baidu_ocr_api_key) if self.baidu_ocr_api_key else 0,
             'image_format': self.image_format,
+            'use_local_ocr_inpaint': self.use_local_ocr_inpaint,
+            'local_ocr_url': self.local_ocr_url,
+            'local_inpaint_url': self.local_inpaint_url,
+            'text_style_extraction_mode': self.text_style_extraction_mode,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -104,6 +113,10 @@ class Settings(db.Model):
                 output_language='zh',  # 默认中文
                 baidu_ocr_api_key=Config.BAIDU_OCR_API_KEY or None,
                 image_format=Config.IMAGE_FORMAT,
+                use_local_ocr_inpaint=False,
+                local_ocr_url='http://127.0.0.1:8000/ocr',
+                local_inpaint_url='http://127.0.0.1:8000/inpaint',
+                text_style_extraction_mode='local_cv',
             )
             settings.id = 1
             db.session.add(settings)

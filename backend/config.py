@@ -53,8 +53,8 @@ class Config:
     VERTEX_LOCATION = os.getenv('VERTEX_LOCATION', 'us-central1')
     
     # GenAI (Gemini) 格式专用配置
-    GENAI_TIMEOUT = float(os.getenv('GENAI_TIMEOUT', '300.0'))  # Gemini 超时时间（秒）
-    GENAI_MAX_RETRIES = int(os.getenv('GENAI_MAX_RETRIES', '2'))  # Gemini 最大重试次数（应用层实现）
+    GENAI_TIMEOUT = float(os.getenv('GENAI_TIMEOUT', '600.0'))  # Gemini 超时时间（秒）
+    GENAI_MAX_RETRIES = int(os.getenv('GENAI_MAX_RETRIES', '5'))  # Gemini 最大重试次数（应用层实现）
     
     # OpenAI 格式专用配置（当 AI_PROVIDER_FORMAT=openai 时使用）
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')  # 当 AI_PROVIDER_FORMAT=openai 时必须设置

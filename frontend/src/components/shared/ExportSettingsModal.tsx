@@ -1,11 +1,12 @@
 import React from 'react';
 import { Modal, Button } from '@/components/shared';
 import type { ExportExtractorMethod, ExportInpaintMethod } from '@/types';
+import { getSettings } from '@/api/endpoints';
 
 interface ExportSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (extractor: ExportExtractorMethod, inpaint: ExportInpaintMethod) => void;
+  onConfirm: (extractor: ExportExtractorMethod | 'local', inpaint: ExportInpaintMethod | 'local') => void;
   initialExtractor: ExportExtractorMethod;
   initialInpaint: ExportInpaintMethod;
 }
@@ -17,14 +18,31 @@ export const ExportSettingsModal: React.FC<ExportSettingsModalProps> = ({
   initialExtractor,
   initialInpaint,
 }) => {
-  const [extractor, setExtractor] = React.useState<ExportExtractorMethod>(initialExtractor);
-  const [inpaint, setInpaint] = React.useState<ExportInpaintMethod>(initialInpaint);
+  // 扩展类型以支持 'local'
+  const [extractor, setExtractor] = React.useState<ExportExtractorMethod | 'local'>(initialExtractor);
+  const [inpaint, setInpaint] = React.useState<ExportInpaintMethod | 'local'>(initialInpaint);
+  const [globalLocalEnabled, setGlobalLocalEnabled] = React.useState(false);
 
   // Reset state when modal opens
   React.useEffect(() => {
     if (isOpen) {
-      setExtractor(initialExtractor);
-      setInpaint(initialInpaint);
+      // Check global settings
+      getSettings().then(res => {
+        if (res.data?.use_local_ocr_inpaint) {
+          setGlobalLocalEnabled(true);
+          // 默认选中 Local
+          setExtractor('local');
+          setInpaint('local');
+        } else {
+          setGlobalLocalEnabled(false);
+          setExtractor(initialExtractor);
+          setInpaint(initialInpaint);
+        }
+      }).catch(err => {
+        console.error("Failed to fetch settings:", err);
+        setExtractor(initialExtractor);
+        setInpaint(initialInpaint);
+      });
     }
   }, [isOpen, initialExtractor, initialInpaint]);
 
@@ -44,6 +62,15 @@ export const ExportSettingsModal: React.FC<ExportSettingsModalProps> = ({
           </p>
         </div>
         
+        {globalLocalEnabled && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+            <p className="font-semibold mb-1">🚀 默认使用本地服务</p>
+            <p>
+              全局设置已启用本地 OCR & Inpaint。已自动为您选择本地模式，您也可以手动切换为其他模式。
+            </p>
+          </div>
+        )}
+        
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -51,14 +78,16 @@ export const ExportSettingsModal: React.FC<ExportSettingsModalProps> = ({
             </label>
             <select
               value={extractor}
-              onChange={(e) => setExtractor(e.target.value as ExportExtractorMethod)}
+              onChange={(e) => setExtractor(e.target.value as any)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-banana-500 focus:border-banana-500 sm:text-sm"
             >
+              {globalLocalEnabled && <option value="local">本地模式 (Local) - 使用配置的本地OCR接口</option>}
               <option value="hybrid">混合模式 (推荐) - MinerU + 百度OCR表格精修</option>
               <option value="mineru">快速模式 - 仅使用 MinerU</option>
+              {!globalLocalEnabled && <option value="local">本地模式 (Local) - 需要先在设置中启用</option>}
             </select>
             <p className="mt-1 text-xs text-gray-500">
-              混合模式在处理复杂表格时效果更好，但速度稍慢。
+              混合模式在处理复杂表格时效果更好，本地模式速度最快。
             </p>
           </div>
           
@@ -68,15 +97,17 @@ export const ExportSettingsModal: React.FC<ExportSettingsModalProps> = ({
             </label>
             <select
               value={inpaint}
-              onChange={(e) => setInpaint(e.target.value as ExportInpaintMethod)}
+              onChange={(e) => setInpaint(e.target.value as any)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-banana-500 focus:border-banana-500 sm:text-sm"
             >
+              {globalLocalEnabled && <option value="local">本地模式 (Local) - 使用配置的本地Inpaint接口</option>}
               <option value="hybrid">混合模式 (推荐) - 百度去字 + AI画质增强</option>
               <option value="baidu">极速模式 - 仅使用百度去字</option>
               <option value="generative">画质优先 - 仅使用AI重绘 (较慢)</option>
+              {!globalLocalEnabled && <option value="local">本地模式 (Local) - 需要先在设置中启用</option>}
             </select>
             <p className="mt-1 text-xs text-gray-500">
-              决定如何移除原图中的文字以生成干净背景。混合模式兼顾去字彻底性和画质。
+              决定如何移除原图中的文字以生成干净背景。
             </p>
           </div>
         </div>

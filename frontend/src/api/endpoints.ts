@@ -855,6 +855,14 @@ export const resetSettings = async (): Promise<ApiResponse<Settings>> => {
 };
 
 /**
+ * 运行服务测试
+ */
+export const runSettingsTest = async (testName: string, settings?: any): Promise<ApiResponse> => {
+  const response = await apiClient.post<ApiResponse>(`/api/settings/tests/${testName}`, settings);
+  return response.data;
+};
+
+/**
  * 验证 API key 是否可用
  */
 export const verifyApiKey = async (): Promise<ApiResponse<{ available: boolean; message: string }>> => {

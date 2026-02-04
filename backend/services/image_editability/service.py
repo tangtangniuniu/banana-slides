@@ -323,6 +323,9 @@ class ImageEditabilityService:
             img_width, img_height = img.size
             element_types = [elem.element_type for elem in elements]
             
+            # 收集 poly 信息 (针对本地 OCR 优化)
+            polys = [elem.metadata.get('poly') for elem in elements]
+            
             # 计算crop_box
             if depth == 0:
                 crop_box = (0, 0, img_width, img_height)
@@ -344,7 +347,8 @@ class ImageEditabilityService:
             # 过滤覆盖过大的bbox
             filtered_bboxes = []
             filtered_types = []
-            for bbox, elem_type in zip(bboxes, element_types):
+            filtered_polys = []
+            for bbox, elem_type, poly in zip(bboxes, element_types, polys):
                 if isinstance(bbox, (tuple, list)) and len(bbox) == 4:
                     x0, y0, x1, y1 = bbox
                     coverage = ((x1 - x0) * (y1 - y0)) / (img_width * img_height)
@@ -352,6 +356,7 @@ class ImageEditabilityService:
                         continue
                 filtered_bboxes.append(bbox)
                 filtered_types.append(elem_type)
+                filtered_polys.append(poly)
             
             if not filtered_bboxes:
                 return None
@@ -369,7 +374,9 @@ class ImageEditabilityService:
                 expand_pixels=10,
                 save_mask_path=str(output_dir / 'mask.png'),
                 full_page_image=full_page_img,
-                crop_box=crop_box
+                crop_box=crop_box,
+                polys=filtered_polys, # 传递 poly 信息
+                image_id=image_id
             )
             
             if result_img is None:
