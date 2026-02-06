@@ -787,7 +787,7 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
             
             # Determine if background is light or dark by checking corners
             h, w = gray.shape
-            corners = [gray[0,0], gray[0, w-1], gray[h-1, 0], gray[h-1, w-1]]
+            corners = [int(gray[0,0]), int(gray[0, w-1]), int(gray[h-1, 0]), int(gray[h-1, w-1])]
             avg_bg = sum(corners) / 4
             
             is_light_bg = avg_bg > 127
@@ -803,10 +803,27 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
             text_pixel_count = self.cv2.countNonZero(mask)
             
             if text_pixel_count > 0:
-                # Calculate mean color of text pixels
-                mean_val = self.cv2.mean(cv_img, mask=mask)
+                # 使用更稳健的颜色提取方法：取最极端的 20% 像素的平均值
+                # 这样可以避开文字边缘受背景颜色影响的像素（抗锯齿产生的混合色）
+                pixels = cv_img[mask > 0]
+                
+                # 计算每个像素的亮度总和 (BGR sum)
+                intensities = self.np.sum(pixels, axis=1)
+                
+                if is_light_bg:
+                    # 浅色背景：文字通常较深，取亮度最低（最暗）的 20% 像素
+                    n_pixels = max(1, len(pixels) // 5)
+                    indices = self.np.argsort(intensities)[:n_pixels]
+                else:
+                    # 深色背景：文字通常较浅，取亮度最高（最亮）的 20% 像素
+                    n_pixels = max(1, len(pixels) // 5)
+                    indices = self.np.argsort(intensities)[-n_pixels:]
+                
+                # 计算所选像素的平均颜色
+                robust_mean = self.np.mean(pixels[indices], axis=0)
+                
                 # BGR to RGB
-                font_color_rgb = (int(mean_val[2]), int(mean_val[1]), int(mean_val[0]))
+                font_color_rgb = (int(robust_mean[2]), int(robust_mean[1]), int(robust_mean[0]))
             else:
                 # Fallback to black or center pixel
                 font_color_rgb = (0, 0, 0)

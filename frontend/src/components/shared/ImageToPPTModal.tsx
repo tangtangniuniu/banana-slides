@@ -3,6 +3,7 @@ import { Upload, X } from 'lucide-react';
 import { Modal, Button, useToast } from '@/components/shared';
 import { createProject, convertImagesToPPT } from '@/api/endpoints';
 import { useNavigate } from 'react-router-dom';
+import { useExportTasksStore } from '@/store/useExportTasksStore';
 import type { ExportExtractorMethod, ExportInpaintMethod } from '@/types';
 
 interface ImageToPPTModalProps {
@@ -13,6 +14,7 @@ interface ImageToPPTModalProps {
 export const ImageToPPTModal: React.FC<ImageToPPTModalProps> = ({ isOpen, onClose }) => {
   const navigate = useNavigate();
   const { show } = useToast();
+  const { addTask, pollTask } = useExportTasksStore();
   const [files, setFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -51,7 +53,22 @@ export const ImageToPPTModal: React.FC<ImageToPPTModalProps> = ({ isOpen, onClos
       if (!projectId) throw new Error('创建项目失败');
 
       // 2. 调用转换接口
-      await convertImagesToPPT(projectId, files, extractorMethod, inpaintMethod);
+      const convertResponse = await convertImagesToPPT(projectId, files, extractorMethod, inpaintMethod);
+      const taskId = convertResponse.data?.task_id;
+      const pageIds = convertResponse.data?.page_ids;
+
+      if (taskId) {
+        const exportTaskId = `img-convert-${Date.now()}`;
+        addTask({
+          id: exportTaskId,
+          taskId,
+          projectId,
+          type: 'editable-pptx',
+          status: 'PROCESSING',
+          pageIds: pageIds
+        });
+        pollTask(exportTaskId, projectId, taskId);
+      }
       
       show({ message: '已开始转换，正在跳转...', type: 'success' });
       

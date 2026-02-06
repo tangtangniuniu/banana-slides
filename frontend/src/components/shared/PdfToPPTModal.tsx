@@ -3,6 +3,7 @@ import { Upload, X, FileText, Settings, Sparkles, Layers } from 'lucide-react';
 import { Modal, Button, useToast, Textarea } from '@/components/shared';
 import { createProject, convertPdfToPPT } from '@/api/endpoints';
 import { useNavigate } from 'react-router-dom';
+import { useExportTasksStore } from '@/store/useExportTasksStore';
 import type { ExportExtractorMethod, ExportInpaintMethod } from '@/types';
 
 interface PdfToPPTModalProps {
@@ -13,6 +14,7 @@ interface PdfToPPTModalProps {
 export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose }) => {
   const navigate = useNavigate();
   const { show } = useToast();
+  const { addTask, pollTask } = useExportTasksStore();
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -66,7 +68,7 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
       if (!projectId) throw new Error('创建项目失败');
 
       // 2. 调用转换接口 (异步任务)
-      await convertPdfToPPT(
+      const convertResponse = await convertPdfToPPT(
         projectId, 
         file, 
         mode, 
@@ -75,6 +77,22 @@ export const PdfToPPTModal: React.FC<PdfToPPTModalProps> = ({ isOpen, onClose })
         extractorMethod,
         inpaintMethod
       );
+      
+      const taskId = convertResponse.data?.task_id;
+      const pageIds = convertResponse.data?.page_ids;
+
+      if (taskId) {
+        const exportTaskId = `pdf-convert-${Date.now()}`;
+        addTask({
+          id: exportTaskId,
+          taskId,
+          projectId,
+          type: 'editable-pptx', // Treat as editable PPTX export
+          status: 'PROCESSING',
+          pageIds: pageIds
+        });
+        pollTask(exportTaskId, projectId, taskId);
+      }
       
       show({ message: '已提交 PDF 转换任务，正在跳转...', type: 'success' });
       

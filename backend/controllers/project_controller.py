@@ -1138,38 +1138,10 @@ def convert_images_to_ppt(project_id):
         if not new_page_ids:
             return bad_request("Failed to process any images")
             
-        # Create Task
-        task = Task(
-            project_id=project_id,
-            task_type='EXPORT_EDITABLE_PPTX',
-            status='PENDING'
-        )
-        db.session.add(task)
-        db.session.commit()
-        
-        # Submit Task
-        app = current_app._get_current_object()
-        
-        task_manager.submit_task(
-            task.id,
-            export_editable_pptx_with_recursive_analysis_task,
-            project_id=project_id,
-            filename=filename,
-            file_service=file_service,
-            page_ids=new_page_ids, # Only convert the newly added pages
-            max_depth=2, # Default to recursive for better quality
-            max_workers=4,
-            export_extractor_method=extractor_method,
-            export_inpaint_method=inpaint_method,
-            save_analysis=True, # Enable saving analysis results
-            app=app
-        )
-        
         return success_response({
-            'task_id': task.id,
             'page_ids': new_page_ids,
-            'message': f'Started converting {len(new_page_ids)} images to PPTX'
-        }, status_code=202)
+            'message': f'Successfully imported {len(new_page_ids)} images'
+        })
         
     except Exception as e:
         db.session.rollback()
@@ -1302,66 +1274,10 @@ def convert_pdf_to_ppt(project_id):
 
                 db.session.commit()
 
-                # Create Task
-                task = Task(
-                    project_id=project_id,
-                    task_type='CONVERT_PDF',
-                    status='PENDING'
-                )
-                db.session.add(task)
-                db.session.commit()
-
-                app = current_app._get_current_object()
-
-                if mode == 'reconstructed':
-                    # Submit reconstruction task (with export)
-                    export_options = {
-                        'filename': filename,
-                        'export_extractor_method': request.form.get('extractor_method', 'hybrid'),
-                        'export_inpaint_method': request.form.get('inpaint_method', 'hybrid')
-                    }
-
-                    # Also use AI Service
-                    ai_service = get_ai_service()
-
-                    task_manager.submit_task(
-                        task.id,
-                        reconstruct_pdf_pages_task,
-                        project_id=project_id,
-                        page_ids=new_page_ids,
-                        style_prompt=template_style,
-                        ai_service=ai_service,
-                        file_service=file_service,
-                        aspect_ratio=current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
-                        resolution=resolution,
-                        export_options=export_options,
-                        app=app
-                    )
-
-                else:
-                    # Submit standard export task (original mode)
-                    # "1.1. 原始转换：对原始pdf进行分页，提取图片，然后转为可编辑pptx"
-                    # This is exactly what export_editable_pptx... does with the images we just saved.
-                    task_manager.submit_task(
-                        task.id,
-                        export_editable_pptx_with_recursive_analysis_task,
-                        project_id=project_id,
-                        filename=filename,
-                        file_service=file_service,
-                        page_ids=new_page_ids,
-                        max_depth=2,
-                        max_workers=4,
-                        export_extractor_method=request.form.get('extractor_method', 'hybrid'),
-                        export_inpaint_method=request.form.get('inpaint_method', 'hybrid'),
-                        save_analysis=True,
-                        app=app
-                    )
-
                 return success_response({
-                    'task_id': task.id,
                     'page_ids': new_page_ids,
-                    'message': f'Started converting PDF ({len(new_page_ids)} pages)'
-                }, status_code=202)
+                    'message': f'Successfully imported {len(new_page_ids)} pages from PDF'
+                })
 
         finally:
             if os.path.exists(pdf_path):
