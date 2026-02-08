@@ -755,3 +755,123 @@ def import_image_as_page(project_id):
         db.session.rollback()
         logger.error(f"import_image_as_page failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route('/<project_id>/pages/<page_id>/layout-analysis', methods=['GET'])
+def get_layout_analysis(project_id, page_id):
+    """
+    GET /api/projects/{project_id}/pages/{page_id}/layout-analysis - 获取OCR分析结果
+
+    Returns:
+        {
+            "data": {
+                "layout_analysis": {...},
+                "confirmed_element_ids": [...]
+            }
+        }
+    """
+    try:
+        page = Page.query.get(page_id)
+
+        if not page or page.project_id != project_id:
+            logger.warning(f"Page not found: {page_id} for project {project_id}")
+            return not_found('Page')
+
+        layout_analysis = page.get_layout_analysis()
+        confirmed_ids = page.get_confirmed_element_ids()
+
+        logger.info(f"get_layout_analysis: page={page_id}, has_layout={layout_analysis is not None}, "
+                   f"elements_count={len(layout_analysis.get('elements', [])) if layout_analysis else 0}, "
+                   f"confirmed_count={len(confirmed_ids)}")
+
+        return success_response({
+            'layout_analysis': layout_analysis,
+            'confirmed_element_ids': confirmed_ids
+        })
+
+    except Exception as e:
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route('/<project_id>/pages/<page_id>/confirmed-elements', methods=['PUT'])
+def update_confirmed_elements(project_id, page_id):
+    """
+    PUT /api/projects/{project_id}/pages/{page_id}/confirmed-elements - 更新确认的元素列表
+
+    Request body:
+        {
+            "confirmed_element_ids": ["elem1", "elem2"]
+        }
+    """
+    try:
+        page = Page.query.get(page_id)
+
+        if not page or page.project_id != project_id:
+            return not_found('Page')
+
+        data = request.get_json()
+
+        if not data or 'confirmed_element_ids' not in data:
+            return bad_request("confirmed_element_ids is required")
+
+        page.set_confirmed_element_ids(data['confirmed_element_ids'])
+        page.updated_at = datetime.utcnow()
+
+        db.session.commit()
+
+        return success_response({
+            'page_id': page_id,
+            'confirmed_element_ids': page.get_confirmed_element_ids()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route('/<project_id>/confirmed-elements/batch', methods=['PUT'])
+def batch_update_confirmed_elements(project_id):
+    """
+    PUT /api/projects/{project_id}/confirmed-elements/batch - 批量更新确认的元素列表
+
+    Request body:
+        {
+            "pages": {
+                "page1": ["elem1", "elem2"],
+                "page2": ["elem3", "elem4"]
+            }
+        }
+    """
+    try:
+        project = Project.query.get(project_id)
+
+        if not project:
+            return not_found('Project')
+
+        data = request.get_json()
+
+        if not data or 'pages' not in data:
+            return bad_request("pages is required")
+
+        pages_data = data['pages']
+        if not isinstance(pages_data, dict):
+            return bad_request("pages must be a dictionary")
+
+        updated_pages = []
+        for page_id, element_ids in pages_data.items():
+            page = Page.query.get(page_id)
+            if page and page.project_id == project_id:
+                page.set_confirmed_element_ids(element_ids)
+                page.updated_at = datetime.utcnow()
+                updated_pages.append(page_id)
+
+        db.session.commit()
+
+        return success_response({
+            'updated_pages': updated_pages,
+            'count': len(updated_pages)
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return error_response('SERVER_ERROR', str(e), 500)

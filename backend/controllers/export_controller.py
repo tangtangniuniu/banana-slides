@@ -13,6 +13,7 @@ from utils import (
 )
 from services import ExportService, FileService
 from services.ai_service_manager import get_ai_service
+from services.task_manager import task_manager, analyze_layout_task
 
 logger = logging.getLogger(__name__)
 
@@ -239,24 +240,26 @@ def export_markdown(project_id):
 def export_editable_pptx(project_id):
     """
     POST /api/projects/{project_id}/export/editable-pptx - 导出可编辑PPTX（异步）
-    
+
     使用递归分析方法（支持任意尺寸、递归子图分析）
-    
+
     这个端点创建一个异步任务来执行以下操作：
     1. 递归分析图片（支持任意尺寸和分辨率）
     2. 转换为PDF并上传MinerU识别
     3. 提取元素bbox和生成clean background（inpainting）
     4. 递归处理图片/图表中的子元素
     5. 创建可编辑PPTX
-    
+
     Request body (JSON):
         {
             "filename": "optional_custom_name.pptx",
             "page_ids": ["id1", "id2"],  // 可选，要导出的页面ID列表（不提供则导出所有）
             "max_depth": 1,      // 可选，递归深度（默认1=不递归，2=递归一层）
-            "max_workers": 4     // 可选，并发数（默认4）
+            "max_workers": 4,    // 可选，并发数（默认4）
+            "use_confirmed_elements": false,  // 可选，使用人工确认的元素列表
+            "skip_ocr": false    // 可选，跳过OCR（使用已有layout_analysis）
         }
-    
+
     Returns:
         JSON with task_id, e.g.
         {
@@ -269,46 +272,50 @@ def export_editable_pptx(project_id):
             },
             "message": "Export task created"
         }
-    
+
     轮询 /api/projects/{project_id}/tasks/{task_id} 获取进度和下载链接
     """
     try:
         project = Project.query.get(project_id)
-        
+
         if not project:
             return not_found('Project')
-        
+
         # Get parameters from request body
         data = request.get_json() or {}
-        
+
         # Get page_ids from request body and fetch filtered pages
         selected_page_ids = parse_page_ids_from_body(data)
         pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
-        
+
         if not pages:
             return bad_request("No pages found for project")
-        
+
         # Check if pages have generated images
         has_images = any(page.generated_image_path for page in pages)
         if not has_images:
             return bad_request("No generated images found for project")
-        
+
         # Get parameters from request body
         data = request.get_json() or {}
         filename = data.get('filename', f'presentation_editable_{project_id}.pptx')
         if not filename.endswith('.pptx'):
             filename += '.pptx'
-        
+
         # 递归分析参数
         # max_depth 语义：1=只处理表层不递归，2=递归一层（处理图片/图表中的子元素）
         max_depth = data.get('max_depth', 1)  # 默认不递归，与测试脚本一致
         max_workers = data.get('max_workers', 4)
-        
+
+        # 人工确认相关参数
+        use_confirmed_elements = data.get('use_confirmed_elements', False)
+        skip_ocr = data.get('skip_ocr', False)
+
         # Validate parameters
         # max_depth >= 1: 至少处理表层元素
         if not isinstance(max_depth, int) or max_depth < 1 or max_depth > 5:
             return bad_request("max_depth must be an integer between 1 and 5")
-        
+
         if not isinstance(max_workers, int) or max_workers < 1 or max_workers > 16:
             return bad_request("max_workers must be an integer between 1 and 16")
         
@@ -343,8 +350,8 @@ def export_editable_pptx(project_id):
         if export_inpaint_method not in ['generative', 'baidu', 'hybrid', 'local']:
             export_inpaint_method = 'hybrid'
             
-        logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}")
-        
+        logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr}")
+
         # 使用递归分析任务（不需要 ai_service，使用 ImageEditabilityService）
         task_manager.submit_task(
             task.id,
@@ -357,6 +364,8 @@ def export_editable_pptx(project_id):
             max_workers=max_workers,
             export_extractor_method=export_extractor_method,
             export_inpaint_method=export_inpaint_method,
+            use_confirmed_elements=use_confirmed_elements,
+            skip_ocr=skip_ocr,
             app=app
         )
         
@@ -374,4 +383,93 @@ def export_editable_pptx(project_id):
     
     except Exception as e:
         logger.exception("Error creating export task")
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@export_bp.route('/<project_id>/export/preprocess-ocr', methods=['POST'])
+def preprocess_ocr(project_id):
+    """
+    POST /api/projects/{project_id}/export/preprocess-ocr - OCR预处理（只分析不擦除）
+
+    用于人工确认模式：先执行OCR分析，用户确认后再执行导出。
+
+    Request body (JSON):
+        {
+            "page_ids": ["id1", "id2"],  // 可选，要处理的页面ID列表
+            "extractor_method": "hybrid"  // 可选，组件提取方法
+        }
+
+    Returns:
+        JSON with task_id, e.g.
+        {
+            "success": true,
+            "data": {
+                "task_id": "uuid-here"
+            },
+            "message": "OCR preprocess task created"
+        }
+
+    任务完成后状态为 WAITING_CONFIRMATION
+    """
+    try:
+        project = Project.query.get(project_id)
+
+        if not project:
+            return not_found('Project')
+
+        data = request.get_json() or {}
+
+        # Get page_ids from request body and fetch filtered pages
+        selected_page_ids = parse_page_ids_from_body(data)
+        pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
+
+        if not pages:
+            return bad_request("No pages found for project")
+
+        # Check if pages have generated images
+        has_images = any(page.generated_image_path for page in pages)
+        if not has_images:
+            return bad_request("No generated images found for project")
+
+        # Get extractor method
+        extractor_method = data.get('extractor_method') or project.export_extractor_method or 'hybrid'
+        if extractor_method not in ['mineru', 'hybrid', 'local']:
+            extractor_method = 'hybrid'
+
+        # Create task record
+        task = Task(
+            project_id=project_id,
+            task_type='PREPROCESS_OCR',
+            status='PENDING'
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        logger.info(f"Created preprocess OCR task {task.id} for project {project_id}")
+
+        # Get Flask app instance for background task
+        app = current_app._get_current_object()
+
+        # Submit background task
+        task_manager.submit_task(
+            task.id,
+            analyze_layout_task,
+            project_id=project_id,
+            page_ids=selected_page_ids if selected_page_ids else None,
+            extractor_method=extractor_method,
+            max_depth=1,
+            app=app
+        )
+
+        logger.info(f"Submitted preprocess OCR task {task.id} to task manager")
+
+        return success_response(
+            data={
+                "task_id": task.id
+            },
+            message="OCR preprocess task created"
+        )
+
+    except Exception as e:
+        logger.exception("Error creating preprocess OCR task")
         return error_response('SERVER_ERROR', str(e), 500)

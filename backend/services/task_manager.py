@@ -824,9 +824,171 @@ def generate_material_image_task(task_id: str, project_id: str, prompt: str,
                     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def analyze_layout_task(
+    task_id: str,
+    project_id: str,
+    page_ids: List[str] = None,
+    extractor_method: str = 'hybrid',
+    max_depth: int = 1,
+    app=None
+):
+    """
+    后台任务：对幻灯片进行版面分析（OCR）而不进行重绘
+    结果将保存到 Page 模型的 layout_analysis 字段中
+    任务完成后状态设为 WAITING_CONFIRMATION
+    """
+    logger.info(f"🚀 Task {task_id} started: analyze_layout (project={project_id})")
+
+    if app is None:
+        raise ValueError("Flask app instance must be provided")
+
+    with app.app_context():
+        import os
+        from models import Project, Page, Task, db, Settings
+        from services.image_editability import ServiceConfig, ImageEditabilityService
+        from services.ai_service_manager import get_ai_service
+        from services.file_service import FileService
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        try:
+            # 更新任务状态
+            task_obj = Task.query.get(task_id)
+            if not task_obj:
+                logger.error(f"Task {task_id} not found")
+                return
+
+            task_obj.status = 'PROCESSING'
+            db.session.commit()
+
+            # 获取项目和页面
+            project = Project.query.get(project_id)
+            pages = get_filtered_pages(project_id, page_ids)
+
+            if not pages:
+                raise ValueError("No pages found")
+
+            # 初始化文件服务
+            file_service = FileService(app.config.get('UPLOAD_FOLDER'))
+
+            # 获取全局设置
+            settings = Settings.get_settings()
+
+            # 初始化服务
+            ai_service = get_ai_service()
+            from services.image_editability.factories import ServiceConfig
+            config = ServiceConfig.from_defaults(
+                mineru_token=settings.mineru_token,
+                mineru_api_base=settings.mineru_api_base,
+                upload_folder=app.config.get('UPLOAD_FOLDER'),
+                ai_service=ai_service,
+                extractor_method=extractor_method,
+                max_depth=max_depth,
+                use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
+                local_ocr_url=settings.local_ocr_url,
+                local_inpaint_url=settings.local_inpaint_url
+            )
+            editability_service = ImageEditabilityService(config)
+
+            total = len(pages)
+            completed_count = 0
+
+            task_obj.set_progress({
+                "total": total,
+                "completed": 0,
+                "percent": 0,
+                "current_step": "正在初始化..."
+            })
+            db.session.commit()
+
+            def process_single_page(page_id):
+                with app.app_context():
+                    try:
+                        page = Page.query.get(page_id)
+                        if not page or not page.generated_image_path:
+                            logger.warning(f"Page {page_id}: no generated_image_path")
+                            return page_id, None, "No image path"
+
+                        img_path = file_service.get_absolute_path(page.generated_image_path)
+                        if not os.path.exists(img_path):
+                            logger.warning(f"Page {page_id}: image file not found at {img_path}")
+                            return page_id, None, "Image file not found"
+
+                        logger.info(f"Page {page_id}: starting OCR analysis on {img_path}")
+
+                        # 执行分析，传入空列表以跳过 Inpaint
+                        editable_img = editability_service.make_image_editable(
+                            image_path=img_path,
+                            selected_element_ids=[]  # 空列表表示不进行任何重绘
+                        )
+
+                        if editable_img is None:
+                            logger.error(f"Page {page_id}: make_image_editable returned None")
+                            return page_id, None, "Analysis returned None"
+
+                        # 保存结果
+                        layout_dict = editable_img.to_dict()
+                        page.set_layout_analysis(layout_dict)
+                        # 默认所有元素都选中（红色框=擦除）
+                        # 从 to_dict 后的字典中获取 element_id
+                        all_element_ids = [elem.get('element_id') for elem in layout_dict.get('elements', []) if elem.get('element_id')]
+                        page.set_confirmed_element_ids(all_element_ids)
+                        db.session.commit()
+                        logger.info(f"Page {page_id}: saved layout_analysis with {len(all_element_ids)} elements")
+                        return page_id, True, None
+                    except Exception as e:
+                        logger.error(f"Page {page_id}: analysis failed - {e}", exc_info=True)
+                        return page_id, None, str(e)
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = {executor.submit(process_single_page, p.id): p.id for p in pages}
+                errors = []
+                for future in as_completed(futures):
+                    page_id = futures[future]
+                    try:
+                        result_page_id, success, error_msg = future.result()
+                        if not success:
+                            errors.append(f"Page {result_page_id}: {error_msg}")
+                    except Exception as e:
+                        errors.append(f"Page {page_id}: {str(e)}")
+
+                    completed_count += 1
+                    task_obj = Task.query.get(task_id)
+                    if task_obj:
+                        task_obj.set_progress({
+                            "total": total,
+                            "completed": completed_count,
+                            "percent": int(100 * completed_count / total),
+                            "current_step": f"正在分析第 {completed_count}/{total} 页..."
+                        })
+                        db.session.commit()
+
+                if errors:
+                    logger.warning(f"Task {task_id}: some pages failed - {errors}")
+
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'WAITING_CONFIRMATION'
+                task_obj.set_progress({
+                    "total": total,
+                    "completed": total,
+                    "percent": 100,
+                    "current_step": "分析完成，等待确认"
+                })
+                db.session.commit()
+            logger.info(f"✓ Task {task_id} COMPLETED (Waiting for confirmation)")
+
+        except Exception as e:
+            logger.error(f"Layout analysis failed: {e}", exc_info=True)
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'FAILED'
+                task_obj.error_message = str(e)
+                db.session.commit()
+
+
 def export_editable_pptx_with_recursive_analysis_task(
-    task_id: str, 
-    project_id: str, 
+    task_id: str,
+    project_id: str,
     filename: str,
     file_service,
     page_ids: list = None,
@@ -835,11 +997,13 @@ def export_editable_pptx_with_recursive_analysis_task(
     export_extractor_method: str = 'hybrid',
     export_inpaint_method: str = 'hybrid',
     save_analysis: bool = False,
+    use_confirmed_elements: bool = False,
+    skip_ocr: bool = False,
     app=None
 ):
     """
     使用递归图片可编辑化分析导出可编辑PPTX的后台任务
-    
+
     Args:
         task_id: 任务ID
         project_id: 项目ID
@@ -851,52 +1015,55 @@ def export_editable_pptx_with_recursive_analysis_task(
         export_extractor_method: 组件提取方法 ('mineru' 或 'hybrid')
         export_inpaint_method: 背景修复方法 ('generative', 'baidu', 'hybrid')
         save_analysis: 是否保存分析结果到JSON文件
+        use_confirmed_elements: 使用人工确认的元素列表
+        skip_ocr: 跳过OCR（使用已有layout_analysis）
         app: Flask应用实例
     """
-    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, save_analysis={save_analysis})")
-    
+    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, save_analysis={save_analysis}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr})")
+
     if app is None:
         raise ValueError("Flask app instance must be provided")
-    
+
     with app.app_context():
         import os
         import json
         from datetime import datetime
         from pathlib import Path
         from PIL import Image
-        from models import Project
+        from models import Project, Page
         from services.export_service import ExportService
-        from services.image_editability import ServiceConfig, ImageEditabilityService, TextAttributeExtractorFactory
+        from services.image_editability import ServiceConfig, ImageEditabilityService, TextAttributeExtractorFactory, EditableImage
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        
+
         logger.info(f"开始递归分析导出任务 {task_id} for project {project_id}")
-        
+
         try:
             # Get project
             project = Project.query.get(project_id)
             if not project:
                 raise ValueError(f'Project {project_id} not found')
-            
+
             # Get pages (filtered by page_ids if provided)
             pages = get_filtered_pages(project_id, page_ids)
             if not pages:
                 raise ValueError('No pages found for project')
-            
+
             image_paths = []
             for page in pages:
                 if page.generated_image_path:
                     img_path = file_service.get_absolute_path(page.generated_image_path)
                     if os.path.exists(img_path):
                         image_paths.append(img_path)
-            
+
             if not image_paths:
                 raise ValueError('No generated images found for project')
-            
+
             logger.info(f"找到 {len(image_paths)} 张图片")
             total_pages = len(image_paths)
-            
+
             # 初始化任务进度（包含消息日志）
             task = Task.query.get(task_id)
+            task.status = 'PROCESSING'
             task.set_progress({
                 "total": 100,  # 使用百分比
                 "completed": 0,
@@ -906,11 +1073,11 @@ def export_editable_pptx_with_recursive_analysis_task(
                 "messages": ["🚀 开始导出可编辑PPTX..."]  # 消息日志
             })
             db.session.commit()
-            
+
             # 进度回调函数
             progress_messages = ["🚀 开始导出可编辑PPTX..."]
             max_messages = 10
-            
+
             def progress_callback(step: str, message: str, percent: int):
                 """更新任务进度到数据库"""
                 nonlocal progress_messages
@@ -919,7 +1086,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                     progress_messages.append(new_message)
                     if len(progress_messages) > max_messages:
                         progress_messages = progress_messages[-max_messages:]
-                    
+
                     task = Task.query.get(task_id)
                     if task:
                         task.set_progress({
@@ -933,77 +1100,137 @@ def export_editable_pptx_with_recursive_analysis_task(
                         db.session.commit()
                 except Exception as e:
                     logger.warning(f"更新进度失败: {e}")
-            
+
             # Step 1: 准备工作
             logger.info("Step 1: 准备工作...")
             progress_callback("准备", f"找到 {len(image_paths)} 张幻灯片图片", 2)
-            
+
             # 准备输出路径
             exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
             os.makedirs(exports_dir, exist_ok=True)
-            
+
             if not filename.endswith('.pptx'):
                 filename += '.pptx'
-            
+
             output_path = os.path.join(exports_dir, filename)
             if os.path.exists(output_path):
                 base_name = filename.rsplit('.', 1)[0]
                 timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
                 filename = f"{base_name}_{timestamp}.pptx"
                 output_path = os.path.join(exports_dir, filename)
-            
+
             # 获取参考尺寸
             first_img = Image.open(image_paths[0])
             slide_width, slide_height = first_img.size
             first_img.close()
-            
-            # Step 2: 显式执行分析（为了支持 save_analysis）
-            logger.info(f"Step 2: 执行图片分析 (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
-            progress_callback("分析", "初始化分析服务...", 5)
-            
+
             # 获取全局设置
             settings = Settings.get_settings()
-            
+
             # 初始化AI服务
             ai_service = AIService()
-            
-            # 2. 初始化服务配置
-            from services.image_editability.factories import ServiceConfig
-            config = ServiceConfig.from_defaults(
-                mineru_token=settings.mineru_token,
-                mineru_api_base=settings.mineru_api_base,
-                upload_folder=app.config.get('UPLOAD_FOLDER'),
-                ai_service=ai_service,
-                extractor_method=export_extractor_method,
-                inpaint_method=export_inpaint_method,
-                max_depth=max_depth,
-                use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
-                local_ocr_url=settings.local_ocr_url,
-                local_inpaint_url=settings.local_inpaint_url
-            )
-            editability_service = ImageEditabilityService(config)
-            
-            editable_images = [None] * total_pages
-            completed_count = 0
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(editability_service.make_image_editable, img_path): idx
-                    for idx, img_path in enumerate(image_paths)
-                }
-                
-                for future in as_completed(futures):
-                    idx = futures[future]
-                    try:
-                        result = future.result()
-                        editable_images[idx] = result
-                        completed_count += 1
-                        # 分析占 5% - 40% 的进度
-                        percent = 5 + int(35 * completed_count / total_pages)
-                        progress_callback("分析", f"已分析第 {completed_count}/{total_pages} 页", percent)
-                    except Exception as e:
-                        logger.error(f"处理图片 {image_paths[idx]} 失败: {e}")
-                        raise
+
+            # Step 2: 执行分析或使用已有分析
+            if skip_ocr and use_confirmed_elements:
+                # 使用已有的 layout_analysis 和 confirmed_element_ids
+                logger.info("Step 2: 使用已有分析结果...")
+                progress_callback("分析", "使用已有分析结果...", 5)
+
+                editable_images = []
+                for idx, page in enumerate(pages):
+                    layout_data = page.get_layout_analysis()
+                    if layout_data:
+                        # 从保存的数据重建 EditableImage
+                        editable_img = EditableImage.from_dict(layout_data)
+                        editable_images.append(editable_img)
+                    else:
+                        # 如果没有分析数据，跳过这个页面
+                        editable_images.append(None)
+                    progress_callback("分析", f"已加载第 {idx+1}/{total_pages} 页分析结果", 5 + int(5 * (idx+1) / total_pages))
+
+                # 根据 confirmed_element_ids 筛选需要处理的元素
+                # 并执行 inpaint
+                logger.info("Step 2.5: 根据确认元素执行 Inpaint...")
+                progress_callback("重绘", "根据确认元素执行背景重绘...", 12)
+
+                # 初始化服务配置
+                from services.image_editability.factories import ServiceConfig
+                config = ServiceConfig.from_defaults(
+                    mineru_token=settings.mineru_token,
+                    mineru_api_base=settings.mineru_api_base,
+                    upload_folder=app.config.get('UPLOAD_FOLDER'),
+                    ai_service=ai_service,
+                    extractor_method=export_extractor_method,
+                    inpaint_method=export_inpaint_method,
+                    max_depth=max_depth,
+                    use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
+                    local_ocr_url=settings.local_ocr_url,
+                    local_inpaint_url=settings.local_inpaint_url
+                )
+                editability_service = ImageEditabilityService(config)
+
+                # 对每个页面执行 inpaint（只处理确认的元素）
+                completed_count = 0
+                for idx, (page, editable_img) in enumerate(zip(pages, editable_images)):
+                    if editable_img is None:
+                        continue
+
+                    confirmed_ids = page.get_confirmed_element_ids()
+                    if confirmed_ids:
+                        # 重新执行 inpaint，只处理确认的元素
+                        img_path = image_paths[idx]
+                        editable_img = editability_service.make_image_editable(
+                            image_path=img_path,
+                            selected_element_ids=confirmed_ids
+                        )
+                        editable_images[idx] = editable_img
+
+                    completed_count += 1
+                    percent = 12 + int(28 * completed_count / total_pages)
+                    progress_callback("重绘", f"已处理第 {completed_count}/{total_pages} 页", percent)
+
+            else:
+                # 正常流程：执行完整分析
+                logger.info(f"Step 2: 执行图片分析 (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
+                progress_callback("分析", "初始化分析服务...", 5)
+
+                # 初始化服务配置
+                from services.image_editability.factories import ServiceConfig
+                config = ServiceConfig.from_defaults(
+                    mineru_token=settings.mineru_token,
+                    mineru_api_base=settings.mineru_api_base,
+                    upload_folder=app.config.get('UPLOAD_FOLDER'),
+                    ai_service=ai_service,
+                    extractor_method=export_extractor_method,
+                    inpaint_method=export_inpaint_method,
+                    max_depth=max_depth,
+                    use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
+                    local_ocr_url=settings.local_ocr_url,
+                    local_inpaint_url=settings.local_inpaint_url
+                )
+                editability_service = ImageEditabilityService(config)
+
+                editable_images = [None] * total_pages
+                completed_count = 0
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(editability_service.make_image_editable, img_path): idx
+                        for idx, img_path in enumerate(image_paths)
+                    }
+
+                    for future in as_completed(futures):
+                        idx = futures[future]
+                        try:
+                            result = future.result()
+                            editable_images[idx] = result
+                            completed_count += 1
+                            # 分析占 5% - 40% 的进度
+                            percent = 5 + int(35 * completed_count / total_pages)
+                            progress_callback("分析", f"已分析第 {completed_count}/{total_pages} 页", percent)
+                        except Exception as e:
+                            logger.error(f"处理图片 {image_paths[idx]} 失败: {e}")
+                            raise
             
             # Step 2.5: 保存分析结果
             if save_analysis:
@@ -1117,8 +1344,9 @@ def reconstruct_pdf_pages_task(
     """
     if app is None:
         raise ValueError("Flask app instance must be provided")
-        
+
     with app.app_context():
+        import os
         try:
             task = Task.query.get(task_id)
             if not task:

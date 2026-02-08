@@ -731,10 +731,7 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
     基于传统 CV 算法的文字属性提取器 (Local CV)
     
     使用 OpenCV 分析文字区域图像，无需调用大模型，速度快。
-    提取：
-    - 字体颜色 (Domaint Color)
-    - 粗体 (Density/Thickness estimation)
-    - 斜体 (Moments/Orientation estimation)
+    优化版：使用精确轮廓中值颜色和距离变换进行样式分析。
     """
     
     def __init__(self):
@@ -757,7 +754,7 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
         **kwargs
     ) -> TextStyleResult:
         """
-        使用 OpenCV 提取文字样式
+        使用 OpenCV 提取文字样式（优化版）
         """
         try:
             # Convert to OpenCV format (BGR)
@@ -766,7 +763,6 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
                 if cv_img is None:
                     raise ValueError(f"Failed to load image: {image}")
             elif isinstance(image, Image.Image):
-                # Convert PIL to CV2
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 cv_img = self.cv2.cvtColor(self.np.array(image), self.cv2.COLOR_RGB2BGR)
@@ -776,96 +772,81 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
             if cv_img is None or cv_img.size == 0:
                 return TextStyleResult(confidence=0.0)
 
-            # 1. 提取颜色 (Font Color)
-            # 假设背景通常是浅色/白色，或者是边缘颜色
-            # 简单策略：二值化，取前景像素的平均颜色
+            # 1. 预处理与二值化
             gray = self.cv2.cvtColor(cv_img, self.cv2.COLOR_BGR2GRAY)
             
-            # Otsu's thresholding to find text pixels
-            # Inverse thresholding because text is usually darker than background
-            # But we need to check if background is dark
-            
-            # Determine if background is light or dark by checking corners
+            # 自动判断背景色（取四个角的平均值）
             h, w = gray.shape
-            corners = [int(gray[0,0]), int(gray[0, w-1]), int(gray[h-1, 0]), int(gray[h-1, w-1])]
-            avg_bg = sum(corners) / 4
-            
+            bg_samples = [gray[0,0], gray[0, w-1], gray[h-1, 0], gray[h-1, w-1], 
+                          gray[h//2, 0], gray[h//2, w-1], gray[0, w//2], gray[h-1, w//2]]
+            avg_bg = self.np.median(bg_samples)
             is_light_bg = avg_bg > 127
             
+            # 使用自适应阈值或 Otsu 二值化
             if is_light_bg:
-                # Text is dark
                 _, mask = self.cv2.threshold(gray, 0, 255, self.cv2.THRESH_BINARY_INV + self.cv2.THRESH_OTSU)
             else:
-                # Text is light
                 _, mask = self.cv2.threshold(gray, 0, 255, self.cv2.THRESH_BINARY + self.cv2.THRESH_OTSU)
-                
-            # Count text pixels
-            text_pixel_count = self.cv2.countNonZero(mask)
             
-            if text_pixel_count > 0:
-                # 使用更稳健的颜色提取方法：取最极端的 20% 像素的平均值
-                # 这样可以避开文字边缘受背景颜色影响的像素（抗锯齿产生的混合色）
-                pixels = cv_img[mask > 0]
-                
-                # 计算每个像素的亮度总和 (BGR sum)
-                intensities = self.np.sum(pixels, axis=1)
-                
-                if is_light_bg:
-                    # 浅色背景：文字通常较深，取亮度最低（最暗）的 20% 像素
-                    n_pixels = max(1, len(pixels) // 5)
-                    indices = self.np.argsort(intensities)[:n_pixels]
-                else:
-                    # 深色背景：文字通常较浅，取亮度最高（最亮）的 20% 像素
-                    n_pixels = max(1, len(pixels) // 5)
-                    indices = self.np.argsort(intensities)[-n_pixels:]
-                
-                # 计算所选像素的平均颜色
-                robust_mean = self.np.mean(pixels[indices], axis=0)
-                
-                # BGR to RGB
-                font_color_rgb = (int(robust_mean[2]), int(robust_mean[1]), int(robust_mean[0]))
+            # 去噪：小面积连通域过滤
+            num_labels, labels, stats, centroids = self.cv2.connectedComponentsWithStats(mask, connectivity=8)
+            clean_mask = self.np.zeros_like(mask)
+            text_stats = []
+            for i in range(1, num_labels):
+                if stats[i, self.cv2.CC_STAT_AREA] > 2: # 忽略极小噪点
+                    clean_mask[labels == i] = 255
+                    text_stats.append(stats[i])
+            
+            text_pixel_count = self.cv2.countNonZero(clean_mask)
+            if text_pixel_count == 0:
+                return TextStyleResult(font_color_rgb=(0, 0, 0), confidence=0.1)
+
+            # 2. 提取精确中值颜色 (Median Color)
+            # 使用中值可以有效避开文字边缘的混合色（抗锯齿）
+            pixels = cv_img[clean_mask > 0]
+            if len(pixels) > 0:
+                # 分通道计算中值
+                median_bgr = self.np.median(pixels, axis=0)
+                font_color_rgb = (int(median_bgr[2]), int(median_bgr[1]), int(median_bgr[0]))
             else:
-                # Fallback to black or center pixel
                 font_color_rgb = (0, 0, 0)
-                
-            # 2. 判断粗体 (Bold)
-            # 像素密度: 文字像素 / 边界框面积
-            # 这是一个非常粗略的估计，准确度有限，但速度快
-            # 也可以考虑骨架提取后的宽度分析，这里暂用密度
-            density = text_pixel_count / (h * w)
-            # 阈值经验值，需要调整
-            is_bold = density > 0.35 
+
+            # 3. 判断粗体 (Bold) - 基于笔划宽度估计
+            # 使用距离变换：每个前景像素到最近背景像素的距离
+            dist_transform = self.cv2.distanceTransform(clean_mask, self.cv2.DIST_L2, 5)
+            # 最大值的两倍通常接近最大笔划宽度
+            max_thickness = self.np.max(dist_transform) * 2
             
-            # 3. 判断斜体 (Italic)
-            # 使用矩 (Moments) 计算主轴方向
-            # 或者使用 minAreaRect
-            coords = self.cv2.findNonZero(mask)
+            # 根据图像高度归一化笔划宽度（相对于行高的比例）
+            # 这里的 h 是裁剪图的高度，通常就是行高
+            relative_thickness = max_thickness / h
+            is_bold = relative_thickness > 0.18 # 经验阈值：粗体通常占行高的 20% 以上
+
+            # 4. 判断斜体 (Italic) - 基于倾斜矩分析
+            # 需要更严格的阈值避免误判细字为斜体
             is_italic = False
-            if coords is not None:
-                # minAreaRect returns (center(x, y), (width, height), angle of rotation)
-                rect = self.cv2.minAreaRect(coords)
-                angle = rect[2]
-                # opencv angle definition varies by version, usually -90 to 0 or 0 to 90
-                # Correcting for upright rects usually having angle close to -90 or 0 or 90
-                # Italic text usually has a slant. 
-                # A simple check: if angle deviates significantly from 0 or 90
-                
-                # Normalize angle to -45 to 45 deviation from vertical
-                if angle < -45:
-                    angle += 90
-                
-                # If angle is between, say, 10 and 30 degrees (or -10 to -30), it might be italic
-                # This is tricky. Let's be conservative.
-                # Usually italic is slanted ~15 degrees.
-                if 5 < abs(angle) < 40:
-                    is_italic = True
+            coords = self.cv2.findNonZero(clean_mask)
+            if coords is not None and len(coords) > 20:  # 需要足够多的点
+                # 计算二阶矩
+                m = self.cv2.moments(clean_mask, binaryImage=True)
+                if abs(m['mu02']) > 1e-5:  # 避免除零
+                    skew = m['mu11'] / m['mu02']
+                    # 斜体文字通常向右倾斜，skew 会有一定的偏移
+                    # 提高阈值，只有明显倾斜才判断为斜体
+                    # 同时检查倾斜方向一致性（真正的斜体通常是一致向右倾斜）
+                    if 0.25 < abs(skew) < 0.7:
+                        # 额外校验：斜体应该有一定的面积占比
+                        area_ratio = text_pixel_count / (h * w)
+                        # 细字体面积占比低，不应轻易判断为斜体
+                        if area_ratio > 0.08:
+                            is_italic = True
 
             return TextStyleResult(
                 font_color_rgb=font_color_rgb,
                 is_bold=is_bold,
                 is_italic=is_italic,
-                confidence=0.6, # Lower confidence than AI
-                metadata={'source': 'local_cv'}
+                confidence=0.8, # 优化后信心度提升
+                metadata={'source': 'local_cv_optimized', 'thickness_ratio': float(relative_thickness)}
             )
 
         except Exception as e:

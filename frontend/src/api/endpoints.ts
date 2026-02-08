@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, LayoutAnalysis } from '@/types';
 import type { Settings } from '../types/index';
 
 // ===== 项目相关 API =====
@@ -472,13 +472,17 @@ export const exportMarkdown = async (
  * @param pageIds 可选的页面ID列表，如果不提供则导出所有页面
  * @param extractorMethod 可选的组件提取方法 ('mineru' | 'hybrid')
  * @param inpaintMethod 可选的背景修复方法 ('generative' | 'baidu' | 'hybrid')
+ * @param useConfirmedElements 使用人工确认的元素列表
+ * @param skipOcr 跳过OCR（使用已有layout_analysis）
  */
 export const exportEditablePPTX = async (
   projectId: string,
   filename?: string,
   pageIds?: string[],
   extractorMethod?: 'mineru' | 'hybrid',
-  inpaintMethod?: 'generative' | 'baidu' | 'hybrid'
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid',
+  useConfirmedElements?: boolean,
+  skipOcr?: boolean
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const response = await apiClient.post<
     ApiResponse<{ task_id: string }>
@@ -486,7 +490,81 @@ export const exportEditablePPTX = async (
     filename,
     page_ids: pageIds,
     extractor_method: extractorMethod,
-    inpaint_method: inpaintMethod
+    inpaint_method: inpaintMethod,
+    use_confirmed_elements: useConfirmedElements,
+    skip_ocr: skipOcr
+  });
+  return response.data;
+};
+
+/**
+ * OCR 预处理（人工确认模式）
+ * @param projectId 项目ID
+ * @param pageIds 可选的页面ID列表
+ * @param extractorMethod 可选的组件提取方法
+ */
+export const preprocessOCR = async (
+  projectId: string,
+  pageIds?: string[],
+  extractorMethod?: 'mineru' | 'hybrid' | 'local'
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const response = await apiClient.post<ApiResponse<{ task_id: string }>>(
+    `/api/projects/${projectId}/export/preprocess-ocr`,
+    {
+      page_ids: pageIds,
+      extractor_method: extractorMethod
+    }
+  );
+  return response.data;
+};
+
+/**
+ * 获取页面的布局分析结果
+ * @param projectId 项目ID
+ * @param pageId 页面ID
+ */
+export const getLayoutAnalysis = async (
+  projectId: string,
+  pageId: string
+): Promise<ApiResponse<{ layout_analysis: LayoutAnalysis | null; confirmed_element_ids: string[] }>> => {
+  const response = await apiClient.get<
+    ApiResponse<{ layout_analysis: LayoutAnalysis | null; confirmed_element_ids: string[] }>
+  >(`/api/projects/${projectId}/pages/${pageId}/layout-analysis`);
+  return response.data;
+};
+
+/**
+ * 更新页面的确认元素列表
+ * @param projectId 项目ID
+ * @param pageId 页面ID
+ * @param confirmedElementIds 确认的元素ID列表
+ */
+export const updateConfirmedElements = async (
+  projectId: string,
+  pageId: string,
+  confirmedElementIds: string[]
+): Promise<ApiResponse<{ page_id: string; confirmed_element_ids: string[] }>> => {
+  const response = await apiClient.put<
+    ApiResponse<{ page_id: string; confirmed_element_ids: string[] }>
+  >(`/api/projects/${projectId}/pages/${pageId}/confirmed-elements`, {
+    confirmed_element_ids: confirmedElementIds
+  });
+  return response.data;
+};
+
+/**
+ * 批量更新确认元素列表
+ * @param projectId 项目ID
+ * @param pages 页面ID到确认元素ID列表的映射
+ */
+export const batchUpdateConfirmedElements = async (
+  projectId: string,
+  pages: Record<string, string[]>
+): Promise<ApiResponse<{ updated_pages: string[]; count: number }>> => {
+  const response = await apiClient.put<
+    ApiResponse<{ updated_pages: string[]; count: number }>
+  >(`/api/projects/${projectId}/confirmed-elements/batch`, {
+    pages
   });
   return response.data;
 };

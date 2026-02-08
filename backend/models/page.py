@@ -23,6 +23,8 @@ class Page(db.Model):
     generated_image_path = db.Column(db.String(500), nullable=True)  # Original PNG image path
     cached_image_path = db.Column(db.String(500), nullable=True)  # Compressed JPG thumbnail path
     status = db.Column(db.String(50), nullable=False, default='DRAFT')
+    layout_analysis = db.Column(db.Text, nullable=True)  # JSON string: OCR result
+    confirmed_element_ids = db.Column(db.Text, nullable=True)  # JSON string: List of confirmed IDs
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -31,6 +33,38 @@ class Page(db.Model):
     image_versions = db.relationship('PageImageVersion', back_populates='page', 
                                      lazy='dynamic', cascade='all, delete-orphan',
                                      order_by='PageImageVersion.version_number.desc()')
+    
+    def get_layout_analysis(self):
+        """Parse layout_analysis from JSON string"""
+        if self.layout_analysis:
+            try:
+                return json.loads(self.layout_analysis)
+            except json.JSONDecodeError:
+                return None
+        return None
+    
+    def set_layout_analysis(self, data):
+        """Set layout_analysis as JSON string"""
+        if data:
+            self.layout_analysis = json.dumps(data, ensure_ascii=False)
+        else:
+            self.layout_analysis = None
+
+    def get_confirmed_element_ids(self):
+        """Parse confirmed_element_ids from JSON string"""
+        if self.confirmed_element_ids:
+            try:
+                return json.loads(self.confirmed_element_ids)
+            except json.JSONDecodeError:
+                return []
+        return []
+    
+    def set_confirmed_element_ids(self, data):
+        """Set confirmed_element_ids as JSON string"""
+        if data:
+            self.confirmed_element_ids = json.dumps(data, ensure_ascii=False)
+        else:
+            self.confirmed_element_ids = None
     
     def get_outline_content(self):
         """Parse outline_content from JSON string"""
@@ -81,6 +115,8 @@ class Page(db.Model):
             'description_content': self.get_description_content(),
             'generated_image_url': display_image_url,
             'status': self.status,
+            'layout_analysis': self.get_layout_analysis(),
+            'confirmed_element_ids': self.get_confirmed_element_ids(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

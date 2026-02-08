@@ -25,5 +25,7 @@ export { ExportTasksPanel } from './ExportTasksPanel';
 export { ExportSettingsModal } from './ExportSettingsModal';
 export { ImageToPPTModal } from './ImageToPPTModal';
 export { PdfToPPTModal } from './PdfToPPTModal';
+export { VerificationCanvas } from './VerificationCanvas';
+export { VerificationModal } from './VerificationModal';
 
 

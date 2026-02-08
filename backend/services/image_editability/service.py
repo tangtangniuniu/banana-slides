@@ -76,7 +76,8 @@ class ImageEditabilityService:
         parent_bbox: Optional[BBox] = None,
         root_image_size: Optional[Tuple[int, int]] = None,
         element_type: Optional[str] = None,
-        root_image_path: Optional[str] = None
+        root_image_path: Optional[str] = None,
+        selected_element_ids: Optional[List[str]] = None
     ) -> EditableImage:
         """
         将图片转换为可编辑结构（递归）
@@ -91,6 +92,7 @@ class ImageEditabilityService:
             root_image_size: 根图片尺寸（内部使用）
             element_type: 元素类型，用于选择提取器（内部使用）
             root_image_path: 根图片路径（内部使用）
+            selected_element_ids: 用户确认要编辑/覆盖的元素ID列表（可选）
         
         Returns:
             EditableImage对象
@@ -139,10 +141,17 @@ class ImageEditabilityService:
         
         # 3. 生成clean background（根据元素类型选择重绘方法）
         clean_background = None
-        if self._inpaint_registry and elements:
+        
+        # 过滤选中的元素进行重绘（如果有选择列表的话）
+        elements_to_inpaint = elements
+        if selected_element_ids is not None:
+            elements_to_inpaint = [e for e in elements if e.element_id in selected_element_ids]
+            logger.info(f"{'  ' * depth}仅重绘选中的 {len(elements_to_inpaint)}/{len(elements)} 个元素")
+
+        if self._inpaint_registry and elements_to_inpaint:
             clean_background = self._generate_clean_background(
                 image_path=image_path,
-                elements=elements,
+                elements=elements_to_inpaint,
                 image_id=image_id,
                 depth=depth,
                 parent_bbox=parent_bbox,
@@ -161,7 +170,8 @@ class ImageEditabilityService:
                 image_id=image_id,
                 root_image_size=root_image_size,
                 current_image_size=(width, height),
-                root_image_path=root_image_path
+                root_image_path=root_image_path,
+                selected_element_ids=selected_element_ids
             )
         
         # 5. 构建结果
@@ -399,7 +409,8 @@ class ImageEditabilityService:
         image_id: str,
         root_image_size: Tuple[int, int],
         current_image_size: Tuple[int, int],
-        root_image_path: str
+        root_image_path: str,
+        selected_element_ids: Optional[List[str]] = None
     ):
         """递归处理子元素（通过裁剪原图获取子图，并行处理多个子元素）"""
         logger.info(f"{'  ' * depth}递归处理子元素...")
@@ -438,7 +449,8 @@ class ImageEditabilityService:
                     parent_bbox=element.bbox_global,
                     root_image_size=root_image_size,
                     element_type=element.element_type,
-                    root_image_path=root_image_path
+                    root_image_path=root_image_path,
+                    selected_element_ids=selected_element_ids
                 )
                 
                 return element, child_editable, None

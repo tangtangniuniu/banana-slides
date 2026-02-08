@@ -91,6 +91,34 @@ class EditableElement:
         }
         return result
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'EditableElement':
+        """从字典创建 EditableElement"""
+        bbox_data = data.get('bbox', {})
+        bbox_global_data = data.get('bbox_global', bbox_data)
+
+        return cls(
+            element_id=data.get('element_id', ''),
+            element_type=data.get('element_type', 'unknown'),
+            bbox=BBox(
+                x0=bbox_data.get('x0', 0),
+                y0=bbox_data.get('y0', 0),
+                x1=bbox_data.get('x1', 0),
+                y1=bbox_data.get('y1', 0)
+            ),
+            bbox_global=BBox(
+                x0=bbox_global_data.get('x0', 0),
+                y0=bbox_global_data.get('y0', 0),
+                x1=bbox_global_data.get('x1', 0),
+                y1=bbox_global_data.get('y1', 0)
+            ),
+            content=data.get('content'),
+            image_path=data.get('image_path'),
+            children=[cls.from_dict(child) for child in data.get('children', [])],
+            inpainted_background_path=data.get('inpainted_background_path'),
+            metadata=data.get('metadata', {})
+        )
+
 
 @dataclass
 class EditableImage:
@@ -128,4 +156,19 @@ class EditableImage:
             'parent_id': self.parent_id,
             'metadata': self.metadata
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'EditableImage':
+        """从字典创建 EditableImage"""
+        return cls(
+            image_id=data.get('image_id', ''),
+            image_path=data.get('image_path', ''),
+            width=data.get('width', 0),
+            height=data.get('height', 0),
+            elements=[EditableElement.from_dict(elem) for elem in data.get('elements', [])],
+            clean_background=data.get('clean_background'),
+            depth=data.get('depth', 0),
+            parent_id=data.get('parent_id'),
+            metadata=data.get('metadata', {})
+        )
 

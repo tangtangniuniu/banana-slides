@@ -22,7 +22,7 @@ import {
   FileText,
   Loader2,
 } from 'lucide-react';
-import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, ExportSettingsModal } from '@/components/shared';
+import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, ExportSettingsModal, VerificationModal } from '@/components/shared';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate } from '@/api/endpoints';
@@ -32,8 +32,8 @@ import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useExportTasksStore, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
-import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportMarkdown as apiExportMarkdown, exportEditablePPTX as apiExportEditablePPTX } from '@/api/endpoints';
-import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page } from '@/types';
+import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportMarkdown as apiExportMarkdown, exportEditablePPTX as apiExportEditablePPTX, preprocessOCR, getLayoutAnalysis, batchUpdateConfirmedElements, getTaskStatus } from '@/api/endpoints';
+import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, VerificationPageData } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
 
 export const SlidePreview: React.FC = () => {
@@ -115,6 +115,15 @@ export const SlidePreview: React.FC = () => {
   const [showEditableExportModal, setShowEditableExportModal] = useState(false);
   const [tempExportExtractorMethod, setTempExportExtractorMethod] = useState<ExportExtractorMethod>('hybrid');
   const [tempExportInpaintMethod, setTempExportInpaintMethod] = useState<ExportInpaintMethod>('hybrid');
+  // 人工确认相关状态
+  const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
+  const [verificationPagesData, setVerificationPagesData] = useState<VerificationPageData[]>([]);
+  const [isPreprocessing, setIsPreprocessing] = useState(false);
+  const [preprocessingProgress, setPreprocessingProgress] = useState<{ percent: number; message: string } | null>(null);
+  const [pendingExportSettings, setPendingExportSettings] = useState<{
+    extractor: ExportExtractorMethod | 'local';
+    inpaint: ExportInpaintMethod | 'local';
+  } | null>(null);
   // 每页编辑参数缓存（前端会话内缓存，便于重复执行）
   const [editContextByPage, setEditContextByPage] = useState<Record<string, {
     prompt: string;
@@ -709,13 +718,13 @@ export const SlidePreview: React.FC = () => {
     return Array.from(selectedPageIds);
   };
 
-  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod }) => {
+  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod, useConfirmedElements?: boolean, skipOcr?: boolean }) => {
     setShowExportMenu(false);
     if (!projectId) return;
-    
+
     const pageIds = getSelectedPageIdsForExport();
     const exportTaskId = `export-${Date.now()}`;
-    
+
     try {
       if (type === 'pptx' || type === 'pdf' || type === 'markdown') {
         // Synchronous export - direct download, create completed task directly
@@ -727,7 +736,7 @@ export const SlidePreview: React.FC = () => {
         } else {
           response = await apiExportMarkdown(projectId, pageIds);
         }
-        
+
         const downloadUrl = response.data?.download_url || response.data?.download_url_absolute;
         if (downloadUrl) {
           addTask({
@@ -751,12 +760,20 @@ export const SlidePreview: React.FC = () => {
           status: 'PROCESSING',
           pageIds: pageIds,
         });
-        
+
         show({ message: '导出任务已开始，可在导出任务面板查看进度', type: 'success' });
-        
-        const response = await apiExportEditablePPTX(projectId, undefined, pageIds, options?.extractor, options?.inpaint);
+
+        const response = await apiExportEditablePPTX(
+          projectId,
+          undefined,
+          pageIds,
+          options?.extractor,
+          options?.inpaint,
+          options?.useConfirmedElements,
+          options?.skipOcr
+        );
         const taskId = response.data?.task_id;
-        
+
         if (taskId) {
           // Update task with real taskId
           addTask({
@@ -767,7 +784,7 @@ export const SlidePreview: React.FC = () => {
             status: 'PROCESSING',
             pageIds: pageIds,
           });
-          
+
           // Start polling in background (non-blocking)
           pollExportTask(exportTaskId, projectId, taskId);
         }
@@ -784,6 +801,131 @@ export const SlidePreview: React.FC = () => {
         pageIds: pageIds,
       });
       show({ message: normalizeErrorMessage(error.message || '导出失败'), type: 'error' });
+    }
+  };
+
+  // 人工确认模式：开始预处理 OCR
+  const handleStartPreprocessOCR = async (extractor: ExportExtractorMethod | 'local', inpaint: ExportInpaintMethod | 'local') => {
+    if (!projectId) return;
+
+    const pageIds = getSelectedPageIdsForExport();
+    setIsPreprocessing(true);
+    setPreprocessingProgress({ percent: 0, message: '正在启动 OCR 分析...' });
+    setPendingExportSettings({ extractor, inpaint });
+
+    try {
+      // 启动预处理任务
+      const response = await preprocessOCR(projectId, pageIds || undefined, extractor as ExportExtractorMethod);
+      const taskId = response.data?.task_id;
+
+      if (!taskId) {
+        throw new Error('Failed to create preprocess task');
+      }
+
+      // 轮询任务状态
+      const pollInterval = setInterval(async () => {
+        try {
+          const taskResponse = await getTaskStatus(projectId, taskId);
+          const task = taskResponse.data;
+
+          console.log('[OCR预处理] 任务状态:', task);
+
+          if (!task) {
+            clearInterval(pollInterval);
+            setIsPreprocessing(false);
+            show({ message: '获取任务状态失败', type: 'error' });
+            return;
+          }
+
+          const progress = task.progress;
+          if (progress) {
+            setPreprocessingProgress({
+              percent: progress.percent || 0,
+              message: progress.current_step || '处理中...'
+            });
+          }
+
+          if (task.status === 'WAITING_CONFIRMATION' || task.status === 'COMPLETED') {
+            clearInterval(pollInterval);
+
+            // 获取每页的 layout_analysis
+            // 使用 page_id 或 id，确保获取正确的页面ID
+            const pagesToProcess = pageIds || currentProject?.pages.map(p => p.page_id || p.id).filter(Boolean) as string[];
+
+            console.log('[OCR预处理] 任务完成，开始获取分析结果', { pagesToProcess });
+
+            const pagesDataPromises = pagesToProcess.map(async (pageId) => {
+              try {
+                const analysisResponse = await getLayoutAnalysis(projectId, pageId);
+                console.log(`[OCR预处理] 获取页面 ${pageId} 分析结果:`, analysisResponse.data);
+                const page = currentProject?.pages.find(p => p.id === pageId || p.page_id === pageId);
+                return {
+                  pageId,
+                  layoutAnalysis: analysisResponse.data?.layout_analysis || null,
+                  confirmedElementIds: analysisResponse.data?.confirmed_element_ids || [],
+                  imageUrl: page?.generated_image_path
+                    ? getImageUrl(page.generated_image_path, page.updated_at)
+                    : ''
+                } as VerificationPageData;
+              } catch (err) {
+                console.error(`[OCR预处理] 获取页面 ${pageId} 分析结果失败:`, err);
+                const page = currentProject?.pages.find(p => p.id === pageId || p.page_id === pageId);
+                return {
+                  pageId,
+                  layoutAnalysis: null,
+                  confirmedElementIds: [],
+                  imageUrl: page?.generated_image_path
+                    ? getImageUrl(page.generated_image_path, page.updated_at)
+                    : ''
+                } as VerificationPageData;
+              }
+            });
+
+            const pagesData = await Promise.all(pagesDataPromises);
+            console.log('[OCR预处理] 所有页面分析结果:', pagesData);
+            setVerificationPagesData(pagesData);
+            setIsPreprocessing(false);
+            setPreprocessingProgress(null);
+            setIsVerificationModalOpen(true);
+
+          } else if (task.status === 'FAILED') {
+            clearInterval(pollInterval);
+            setIsPreprocessing(false);
+            setPreprocessingProgress(null);
+            show({ message: task.error_message || 'OCR 分析失败', type: 'error' });
+          }
+        } catch (error) {
+          console.error('Poll task error:', error);
+        }
+      }, 1500);
+
+    } catch (error: any) {
+      setIsPreprocessing(false);
+      setPreprocessingProgress(null);
+      show({ message: normalizeErrorMessage(error.message || 'OCR 预处理失败'), type: 'error' });
+    }
+  };
+
+  // 人工确认完成后执行导出
+  const handleVerificationConfirm = async (confirmedElements: Record<string, string[]>) => {
+    if (!projectId) return;
+
+    setIsVerificationModalOpen(false);
+
+    try {
+      // 批量更新确认的元素
+      await batchUpdateConfirmedElements(projectId, confirmedElements);
+
+      // 执行导出（使用确认的元素）
+      handleExport('editable-pptx', {
+        extractor: pendingExportSettings?.extractor as ExportExtractorMethod,
+        inpaint: pendingExportSettings?.inpaint as ExportInpaintMethod,
+        useConfirmedElements: true,
+        skipOcr: true
+      });
+
+    } catch (error: any) {
+      show({ message: normalizeErrorMessage(error.message || '保存确认失败'), type: 'error' });
     }
   };
 
@@ -1767,12 +1909,18 @@ export const SlidePreview: React.FC = () => {
       <ExportSettingsModal
         isOpen={showEditableExportModal}
         onClose={() => setShowEditableExportModal(false)}
-        onConfirm={(extractor, inpaint) => {
-          handleExport('editable-pptx', {
-            extractor,
-            inpaint
-          });
+        onConfirm={(extractor, inpaint, manualConfirmation) => {
           setShowEditableExportModal(false);
+          if (manualConfirmation) {
+            // 人工确认模式：先执行 OCR 预处理
+            handleStartPreprocessOCR(extractor, inpaint);
+          } else {
+            // 直接导出模式
+            handleExport('editable-pptx', {
+              extractor,
+              inpaint
+            });
+          }
         }}
         initialExtractor={tempExportExtractorMethod}
         initialInpaint={tempExportInpaintMethod}
@@ -1858,7 +2006,36 @@ export const SlidePreview: React.FC = () => {
           />
         </>
       )}
-      
+
+      {/* OCR 预处理进度加载 */}
+      {isPreprocessing && (
+        <Loading
+          fullscreen
+          message={preprocessingProgress?.message || '正在分析...'}
+          progress={preprocessingProgress ? {
+            total: 100,
+            completed: preprocessingProgress.percent,
+            percent: preprocessingProgress.percent
+          } : undefined}
+        />
+      )}
+
+      {/* 人工确认弹窗 */}
+      {isVerificationModalOpen && currentProject && (
+        <VerificationModal
+          isOpen={isVerificationModalOpen}
+          onClose={() => {
+            setIsVerificationModalOpen(false);
+            setVerificationPagesData([]);
+            setPendingExportSettings(null);
+          }}
+          onConfirm={handleVerificationConfirm}
+          projectId={projectId || ''}
+          pages={currentProject.pages}
+          pagesData={verificationPagesData}
+        />
+      )}
+
     </div>
   );
 };

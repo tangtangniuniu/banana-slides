@@ -224,18 +224,40 @@ class LocalInpaintProvider(InpaintProvider):
             # if os.path.exists(mask_path): os.remove(mask_path)
             pass
 
-    def _generate_mask(self, size: Tuple[int, int], bboxes: List[tuple], polys: List[List[List[int]]], mask_path: Path):
+    def _generate_mask(self, size: Tuple[int, int], bboxes: List[tuple], polys: List[List[List[int]]], mask_path: Path, padding: int = 5):
+        """
+        生成 Inpaint 掩码图
+
+        Args:
+            size: 图片尺寸 (width, height)
+            bboxes: 边界框列表 [(x0, y0, x1, y1), ...]
+            polys: 多边形列表 [[[x1,y1], [x2,y2], ...], ...]
+            mask_path: 输出掩码图路径
+            padding: 扩展边界的像素数，用于确保文字完全被覆盖
+        """
         width, height = size
         mask = np.zeros((height, width), dtype=np.uint8)
-        
+
         if polys:
             for poly in polys:
                 pts = np.array(poly, np.int32).reshape((-1, 1, 2))
-                cv2.fillPoly(mask, [pts], 255)
+                # 扩展多边形：使用形态学膨胀
+                temp_mask = np.zeros((height, width), dtype=np.uint8)
+                cv2.fillPoly(temp_mask, [pts], 255)
+                # 膨胀操作扩展边界
+                if padding > 0:
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (padding * 2 + 1, padding * 2 + 1))
+                    temp_mask = cv2.dilate(temp_mask, kernel)
+                mask = cv2.bitwise_or(mask, temp_mask)
         else:
-            # 如果没有 poly，回退到 bbox
+            # 如果没有 poly，回退到 bbox（添加 padding）
             for bbox in bboxes:
                 x0, y0, x1, y1 = map(int, bbox)
+                # 扩展边界，但不超出图片范围
+                x0 = max(0, x0 - padding)
+                y0 = max(0, y0 - padding)
+                x1 = min(width, x1 + padding)
+                y1 = min(height, y1 + padding)
                 cv2.rectangle(mask, (x0, y0), (x1, y1), 255, -1)
-                
+
         cv2.imwrite(str(mask_path), mask)

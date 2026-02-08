@@ -260,9 +260,10 @@ class BaiduInpaintProvider(InpaintProvider):
             else:
                 logger.warning("BaiduInpaintProvider: 修复返回空结果")
                 return None
-            
-            # 合并原图和修复后的图片，只取bboxes区域的修复结果（不扩展，避免影响bbox外的区域）
-            mask = create_mask_from_bboxes(image.size, bboxes, expand_pixels=0)
+
+            # 合并原图和修复后的图片，使用扩展后的mask确保覆盖完整
+            # 使用与修复时相同的扩展像素数
+            mask = create_mask_from_bboxes(image.size, bboxes, expand_pixels=expand_pixels)
             return Image.composite(result_image, image, mask.convert('L'))
         
         except Exception as e:

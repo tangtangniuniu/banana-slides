@@ -87,6 +87,7 @@ class PPTXBuilder:
     
     # 项目内置字体（Noto Sans CJK SC，支持中日韩文字）
     FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSansSC-Regular.ttf")
+    DEFAULT_FONT_NAME = "Noto Sans SC"
     
     # Font cache: {size_pt: ImageFont}
     _font_cache: Dict[float, ImageFont.FreeTypeFont] = {}
@@ -99,7 +100,11 @@ class PPTXBuilder:
         
         if cache_key not in cls._font_cache:
             try:
-                cls._font_cache[cache_key] = ImageFont.truetype(cls.FONT_PATH, int(size_pt))
+                if os.path.exists(cls.FONT_PATH):
+                    cls._font_cache[cache_key] = ImageFont.truetype(cls.FONT_PATH, int(size_pt))
+                else:
+                    # Try system default if local font file is missing
+                    cls._font_cache[cache_key] = ImageFont.load_default()
             except Exception as e:
                 logger.warning(f"Failed to load font {cls.FONT_PATH}: {e}")
                 return None
@@ -448,6 +453,7 @@ class PPTXBuilder:
                 run = paragraph.add_run()
                 run.text = replace_some_chars(seg.text)
                 run.font.size = Pt(font_size)
+                run.font.name = self.DEFAULT_FONT_NAME
                 run.font.bold = is_bold
                 run.font.underline = is_underline
                 # Set segment-specific color
@@ -473,6 +479,7 @@ class PPTXBuilder:
             # because setting text_frame.text creates a new paragraph object
             paragraph = text_frame.paragraphs[0]
             paragraph.font.size = Pt(font_size)
+            paragraph.font.name = self.DEFAULT_FONT_NAME
             paragraph.font.bold = is_bold
             paragraph.font.italic = is_italic
             paragraph.font.underline = is_underline
@@ -636,6 +643,7 @@ class PPTXBuilder:
                         
                         for paragraph in text_frame.paragraphs:
                             paragraph.font.size = Pt(font_size)
+                            paragraph.font.name = self.DEFAULT_FONT_NAME
                             paragraph.alignment = PP_ALIGN.CENTER
                             
                             # Header row (first row) should be bold

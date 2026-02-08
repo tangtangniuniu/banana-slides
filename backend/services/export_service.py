@@ -1221,7 +1221,8 @@ class ExportService:
         scale_y: float = 1.0,
         depth: int = 0,
         text_styles_cache: Dict[str, Any] = None,  # 预提取的文本样式缓存，key为element_id
-        warnings: 'ExportWarnings' = None  # 警告收集器
+        warnings: 'ExportWarnings' = None,  # 警告收集器
+        selected_element_ids: Optional[List[str]] = None
     ):
         """
         递归地将EditableElement添加到幻灯片
@@ -1234,6 +1235,7 @@ class ExportService:
             scale_y: Y轴缩放因子
             depth: 当前递归深度
             text_styles_cache: 预提取的文本样式缓存（可选），由 _batch_extract_text_styles 生成
+            selected_element_ids: 用户选中的要重构的元素ID列表。如果不在列表中，则跳过添加。
         
         Note:
             elem.image_path 现在是绝对路径，无需额外的目录参数
@@ -1242,6 +1244,12 @@ class ExportService:
             text_styles_cache = {}
         
         for elem in elements:
+            # 文字块确认逻辑：如果用户指定了选中列表，且该元素不在其中，则跳过渲染
+            # 这样该元素将保持在背景图中（未被擦除）
+            if selected_element_ids is not None and elem.element_id not in selected_element_ids:
+                logger.debug(f"{'  ' * depth}  跳过未选中的元素: {elem.element_id} ({elem.element_type})")
+                continue
+
             elem_type = elem.element_type
             
             # 根据深度决定使用局部坐标还是全局坐标
@@ -1339,7 +1347,8 @@ class ExportService:
                         scale_y=scale_y,
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
-                        warnings=warnings
+                        warnings=warnings,
+                        selected_element_ids=selected_element_ids
                     )
                 else:
                     # 没有子元素，添加整体表格图片
@@ -1403,7 +1412,8 @@ class ExportService:
                         scale_y=scale_y,
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
-                        warnings=warnings
+                        warnings=warnings,
+                        selected_element_ids=selected_element_ids
                     )
                 else:
                     # 没有子元素或子元素占比过大，直接添加原图

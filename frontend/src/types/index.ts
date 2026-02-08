@@ -78,7 +78,7 @@ export interface Project {
 }
 
 // 任务状态
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'WAITING_CONFIRMATION';
 
 // 任务信息
 export interface Task {
@@ -146,6 +146,52 @@ export interface Settings {
   text_style_extraction_mode: 'ai' | 'local_cv' | 'none';
   created_at?: string;
   updated_at?: string;
+}
+
+// 布局元素（OCR分析结果中的单个元素）
+export interface LayoutElement {
+  element_id: string;
+  element_type: string;
+  bbox: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  };
+  bbox_global: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  };
+  content?: string;
+  image_path?: string;
+  children?: LayoutElement[];
+  metadata?: Record<string, unknown>;
+}
+
+// 布局分析结果
+export interface LayoutAnalysis {
+  image_id: string;
+  image_path: string;
+  width: number;
+  height: number;
+  elements: LayoutElement[];
+  clean_background?: string;
+  depth?: number;
+  parent_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// 元素状态类型
+export type ElementStatus = 'keep' | 'erase';
+
+// 人工确认导出的页面数据
+export interface VerificationPageData {
+  pageId: string;
+  layoutAnalysis: LayoutAnalysis | null;
+  confirmedElementIds: string[];
+  imageUrl: string;
 }
 
 

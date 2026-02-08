@@ -436,6 +436,14 @@ class ServiceConfig:
         effective_extractor_method = extractor_method
         if effective_extractor_method is None:
             effective_extractor_method = 'hybrid' if use_hybrid_extractor else 'mineru'
+        
+        # 获取样式提取模式设置
+        text_style_mode = kwargs.get('text_style_extraction_mode', 'local_cv')
+        if has_app_context() and current_app:
+            from models.settings import Settings
+            settings = Settings.get_settings()
+            if not kwargs.get('text_style_extraction_mode'):
+                text_style_mode = settings.text_style_extraction_mode
             
         if effective_extractor_method == 'local':
             local_ocr_url = kwargs.get('local_ocr_url')
@@ -448,6 +456,9 @@ class ServiceConfig:
             if local_extractor:
                 extractor_registry.register_default(local_extractor)
                 logger.info(f"✅ 使用本地 OCR 提取器: {local_ocr_url}")
+                # 本地 OCR 强制使用本地 CV 提取样式
+                text_style_mode = 'local_cv'
+                logger.info("⚠️ 使用本地 OCR，强制切换文字样式提取为 'local_cv'")
             else:
                 # 回退
                 effective_extractor_method = 'hybrid'
@@ -474,6 +485,13 @@ class ServiceConfig:
             else: # mineru
                 mineru_extractor = MinerUElementExtractor(parser_service, upload_path)
                 extractor_registry.register_default(mineru_extractor)
+        
+        # 创建文字样式提取注册表并存入 kwargs 以便传递给 service
+        text_style_registry = TextAttributeExtractorFactory.create_text_attribute_registry(
+            ai_service=ai_service,
+            mode=text_style_mode
+        )
+        kwargs['text_style_registry'] = text_style_registry
         
         # 创建Inpaint提供者注册表
         inpaint_registry = InpaintProviderRegistry()
