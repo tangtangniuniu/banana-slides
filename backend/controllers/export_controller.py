@@ -311,6 +311,19 @@ def export_editable_pptx(project_id):
         use_confirmed_elements = data.get('use_confirmed_elements', False)
         skip_ocr = data.get('skip_ocr', False)
 
+        # 新增导出设置参数
+        text_style_mode = data.get('text_style_mode', 'local_cv')  # ai, local_cv, none
+        image_resolution = data.get('image_resolution', '1080p')  # 720p, 1080p, 2K
+        image_format = data.get('image_format', 'PNG')  # PNG, JPG, WEBP
+
+        # 验证新参数
+        if text_style_mode not in ['ai', 'local_cv', 'none']:
+            text_style_mode = 'local_cv'
+        if image_resolution not in ['720p', '1080p', '2K']:
+            image_resolution = '1080p'
+        if image_format not in ['PNG', 'JPG', 'WEBP']:
+            image_format = 'PNG'
+
         # Validate parameters
         # max_depth >= 1: 至少处理表层元素
         if not isinstance(max_depth, int) or max_depth < 1 or max_depth > 5:
@@ -350,7 +363,7 @@ def export_editable_pptx(project_id):
         if export_inpaint_method not in ['generative', 'baidu', 'hybrid', 'local']:
             export_inpaint_method = 'hybrid'
             
-        logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr}")
+        logger.info(f"Export settings: extractor={export_extractor_method}, inpaint={export_inpaint_method}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr}, text_style={text_style_mode}, resolution={image_resolution}, format={image_format}")
 
         # 使用递归分析任务（不需要 ai_service，使用 ImageEditabilityService）
         task_manager.submit_task(
@@ -366,6 +379,9 @@ def export_editable_pptx(project_id):
             export_inpaint_method=export_inpaint_method,
             use_confirmed_elements=use_confirmed_elements,
             skip_ocr=skip_ocr,
+            text_style_mode=text_style_mode,
+            image_resolution=image_resolution,
+            image_format=image_format,
             app=app
         )
         

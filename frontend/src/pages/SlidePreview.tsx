@@ -123,6 +123,9 @@ export const SlidePreview: React.FC = () => {
   const [pendingExportSettings, setPendingExportSettings] = useState<{
     extractor: ExportExtractorMethod | 'local';
     inpaint: ExportInpaintMethod | 'local';
+    textStyleMode?: 'ai' | 'local_cv' | 'none';
+    imageResolution?: '720p' | '1080p' | '2K';
+    imageFormat?: 'PNG' | 'JPG' | 'WEBP';
   } | null>(null);
   // 每页编辑参数缓存（前端会话内缓存，便于重复执行）
   const [editContextByPage, setEditContextByPage] = useState<Record<string, {
@@ -718,7 +721,15 @@ export const SlidePreview: React.FC = () => {
     return Array.from(selectedPageIds);
   };
 
-  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: { extractor?: ExportExtractorMethod, inpaint?: ExportInpaintMethod, useConfirmedElements?: boolean, skipOcr?: boolean }) => {
+  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: {
+    extractor?: ExportExtractorMethod | 'local';
+    inpaint?: ExportInpaintMethod | 'local';
+    useConfirmedElements?: boolean;
+    skipOcr?: boolean;
+    textStyleMode?: 'ai' | 'local_cv' | 'none';
+    imageResolution?: '720p' | '1080p' | '2K';
+    imageFormat?: 'PNG' | 'JPG' | 'WEBP';
+  }) => {
     setShowExportMenu(false);
     if (!projectId) return;
 
@@ -770,7 +781,10 @@ export const SlidePreview: React.FC = () => {
           options?.extractor,
           options?.inpaint,
           options?.useConfirmedElements,
-          options?.skipOcr
+          options?.skipOcr,
+          options?.textStyleMode,
+          options?.imageResolution,
+          options?.imageFormat
         );
         const taskId = response.data?.task_id;
 
@@ -805,13 +819,19 @@ export const SlidePreview: React.FC = () => {
   };
 
   // 人工确认模式：开始预处理 OCR
-  const handleStartPreprocessOCR = async (extractor: ExportExtractorMethod | 'local', inpaint: ExportInpaintMethod | 'local') => {
+  const handleStartPreprocessOCR = async (
+    extractor: ExportExtractorMethod | 'local',
+    inpaint: ExportInpaintMethod | 'local',
+    textStyleMode?: 'ai' | 'local_cv' | 'none',
+    imageResolution?: '720p' | '1080p' | '2K',
+    imageFormat?: 'PNG' | 'JPG' | 'WEBP'
+  ) => {
     if (!projectId) return;
 
     const pageIds = getSelectedPageIdsForExport();
     setIsPreprocessing(true);
     setPreprocessingProgress({ percent: 0, message: '正在启动 OCR 分析...' });
-    setPendingExportSettings({ extractor, inpaint });
+    setPendingExportSettings({ extractor, inpaint, textStyleMode, imageResolution, imageFormat });
 
     try {
       // 启动预处理任务
@@ -916,12 +936,15 @@ export const SlidePreview: React.FC = () => {
       // 批量更新确认的元素
       await batchUpdateConfirmedElements(projectId, confirmedElements);
 
-      // 执行导出（使用确认的元素）
+      // 执行导出（使用确认的元素和所有设置）
       handleExport('editable-pptx', {
         extractor: pendingExportSettings?.extractor as ExportExtractorMethod,
         inpaint: pendingExportSettings?.inpaint as ExportInpaintMethod,
         useConfirmedElements: true,
-        skipOcr: true
+        skipOcr: true,
+        textStyleMode: pendingExportSettings?.textStyleMode,
+        imageResolution: pendingExportSettings?.imageResolution,
+        imageFormat: pendingExportSettings?.imageFormat,
       });
 
     } catch (error: any) {
@@ -1909,16 +1932,25 @@ export const SlidePreview: React.FC = () => {
       <ExportSettingsModal
         isOpen={showEditableExportModal}
         onClose={() => setShowEditableExportModal(false)}
-        onConfirm={(extractor, inpaint, manualConfirmation) => {
+        onConfirm={(settings) => {
           setShowEditableExportModal(false);
-          if (manualConfirmation) {
+          if (settings.manualConfirmation) {
             // 人工确认模式：先执行 OCR 预处理
-            handleStartPreprocessOCR(extractor, inpaint);
+            handleStartPreprocessOCR(
+              settings.extractor,
+              settings.inpaint,
+              settings.textStyleMode,
+              settings.imageResolution,
+              settings.imageFormat
+            );
           } else {
             // 直接导出模式
             handleExport('editable-pptx', {
-              extractor,
-              inpaint
+              extractor: settings.extractor,
+              inpaint: settings.inpaint,
+              textStyleMode: settings.textStyleMode,
+              imageResolution: settings.imageResolution,
+              imageFormat: settings.imageFormat,
             });
           }
         }}

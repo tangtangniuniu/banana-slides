@@ -189,6 +189,62 @@ class ImageEditabilityService:
         logger.info(f"{'  ' * depth}[{image_id}] 处理完成")
         return editable_image
     
+    def inpaint_with_existing_analysis(
+        self,
+        image_path: str,
+        editable_image: EditableImage,
+        selected_element_ids: List[str]
+    ) -> EditableImage:
+        """
+        使用已有的分析结果执行 inpaint（不重新执行 OCR）
+
+        Args:
+            image_path: 原始图片路径
+            editable_image: 已有的 EditableImage 分析结果
+            selected_element_ids: 需要 inpaint 的元素 ID 列表
+
+        Returns:
+            更新后的 EditableImage，包含 clean_background
+        """
+        logger.info(f"[{editable_image.image_id}] 使用已有分析执行 inpaint，选中 {len(selected_element_ids)} 个元素")
+
+        if not selected_element_ids:
+            logger.info("没有选中的元素，跳过 inpaint")
+            return editable_image
+
+        # 加载图片
+        try:
+            img = Image.open(image_path)
+            width, height = img.size
+        except Exception as e:
+            logger.error(f"无法加载图片 {image_path}: {e}")
+            raise
+
+        # 过滤选中的元素
+        elements_to_inpaint = [e for e in editable_image.elements if e.element_id in selected_element_ids]
+        logger.info(f"过滤后需要 inpaint 的元素: {len(elements_to_inpaint)}")
+
+        if not elements_to_inpaint:
+            logger.warning("没有匹配的元素需要 inpaint")
+            return editable_image
+
+        # 生成 clean background
+        clean_background = self._generate_clean_background(
+            image_path=image_path,
+            elements=elements_to_inpaint,
+            image_id=editable_image.image_id,
+            depth=0,
+            parent_bbox=None,
+            root_image_path=image_path,
+            image_size=(width, height),
+            element_type=None
+        )
+
+        # 更新并返回
+        editable_image.clean_background = clean_background
+        logger.info(f"[{editable_image.image_id}] inpaint 完成")
+        return editable_image
+
     def _extract_elements(
         self,
         image_path: str,

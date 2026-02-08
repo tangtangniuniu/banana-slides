@@ -479,10 +479,13 @@ export const exportEditablePPTX = async (
   projectId: string,
   filename?: string,
   pageIds?: string[],
-  extractorMethod?: 'mineru' | 'hybrid',
-  inpaintMethod?: 'generative' | 'baidu' | 'hybrid',
+  extractorMethod?: 'mineru' | 'hybrid' | 'local',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid' | 'local',
   useConfirmedElements?: boolean,
-  skipOcr?: boolean
+  skipOcr?: boolean,
+  textStyleMode?: 'ai' | 'local_cv' | 'none',
+  imageResolution?: '720p' | '1080p' | '2K',
+  imageFormat?: 'PNG' | 'JPG' | 'WEBP'
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const response = await apiClient.post<
     ApiResponse<{ task_id: string }>
@@ -492,7 +495,10 @@ export const exportEditablePPTX = async (
     extractor_method: extractorMethod,
     inpaint_method: inpaintMethod,
     use_confirmed_elements: useConfirmedElements,
-    skip_ocr: skipOcr
+    skip_ocr: skipOcr,
+    text_style_mode: textStyleMode,
+    image_resolution: imageResolution,
+    image_format: imageFormat
   });
   return response.data;
 };

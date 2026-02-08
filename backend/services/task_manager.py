@@ -928,12 +928,12 @@ def analyze_layout_task(
                         # 保存结果
                         layout_dict = editable_img.to_dict()
                         page.set_layout_analysis(layout_dict)
-                        # 默认所有元素都选中（红色框=擦除）
-                        # 从 to_dict 后的字典中获取 element_id
-                        all_element_ids = [elem.get('element_id') for elem in layout_dict.get('elements', []) if elem.get('element_id')]
-                        page.set_confirmed_element_ids(all_element_ids)
+                        # 默认全部保留（蓝色框），不擦除任何元素
+                        # 用户需要主动点击选择要擦除的元素
+                        page.set_confirmed_element_ids([])
                         db.session.commit()
-                        logger.info(f"Page {page_id}: saved layout_analysis with {len(all_element_ids)} elements")
+                        element_count = len(layout_dict.get('elements', []))
+                        logger.info(f"Page {page_id}: saved layout_analysis with {element_count} elements")
                         return page_id, True, None
                     except Exception as e:
                         logger.error(f"Page {page_id}: analysis failed - {e}", exc_info=True)
@@ -999,6 +999,9 @@ def export_editable_pptx_with_recursive_analysis_task(
     save_analysis: bool = False,
     use_confirmed_elements: bool = False,
     skip_ocr: bool = False,
+    text_style_mode: str = 'local_cv',
+    image_resolution: str = '1080p',
+    image_format: str = 'PNG',
     app=None
 ):
     """
@@ -1017,9 +1020,12 @@ def export_editable_pptx_with_recursive_analysis_task(
         save_analysis: 是否保存分析结果到JSON文件
         use_confirmed_elements: 使用人工确认的元素列表
         skip_ocr: 跳过OCR（使用已有layout_analysis）
+        text_style_mode: 样式提取模式 ('ai', 'local_cv', 'none')
+        image_resolution: 背景图分辨率 ('720p', '1080p', '2K')
+        image_format: 背景图格式 ('PNG', 'JPG', 'WEBP')
         app: Flask应用实例
     """
-    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, save_analysis={save_analysis}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr})")
+    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, save_analysis={save_analysis}, use_confirmed={use_confirmed_elements}, skip_ocr={skip_ocr}, text_style={text_style_mode})")
 
     if app is None:
         raise ValueError("Flask app instance must be provided")
@@ -1148,8 +1154,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                         editable_images.append(None)
                     progress_callback("分析", f"已加载第 {idx+1}/{total_pages} 页分析结果", 5 + int(5 * (idx+1) / total_pages))
 
-                # 根据 confirmed_element_ids 筛选需要处理的元素
-                # 并执行 inpaint
+                # 根据 confirmed_element_ids 执行 inpaint（只处理用户确认的元素）
                 logger.info("Step 2.5: 根据确认元素执行 Inpaint...")
                 progress_callback("重绘", "根据确认元素执行背景重绘...", 12)
 
@@ -1169,21 +1174,26 @@ def export_editable_pptx_with_recursive_analysis_task(
                 )
                 editability_service = ImageEditabilityService(config)
 
-                # 对每个页面执行 inpaint（只处理确认的元素）
+                # 对每个页面执行 inpaint（使用新方法，不重新 OCR）
                 completed_count = 0
                 for idx, (page, editable_img) in enumerate(zip(pages, editable_images)):
                     if editable_img is None:
+                        completed_count += 1
                         continue
 
                     confirmed_ids = page.get_confirmed_element_ids()
                     if confirmed_ids:
-                        # 重新执行 inpaint，只处理确认的元素
+                        # 使用新方法：只执行 inpaint，不重新 OCR
                         img_path = image_paths[idx]
-                        editable_img = editability_service.make_image_editable(
+                        logger.info(f"Page {page.id}: inpaint {len(confirmed_ids)} confirmed elements")
+                        editable_img = editability_service.inpaint_with_existing_analysis(
                             image_path=img_path,
+                            editable_image=editable_img,
                             selected_element_ids=confirmed_ids
                         )
                         editable_images[idx] = editable_img
+                    else:
+                        logger.info(f"Page {page.id}: no confirmed elements, skip inpaint")
 
                     completed_count += 1
                     percent = 12 + int(28 * completed_count / total_pages)
@@ -1250,13 +1260,12 @@ def export_editable_pptx_with_recursive_analysis_task(
                         logger.error(f"Failed to save analysis for page {page.id}: {e}")
 
             # Step 3: 创建文字属性提取器
-            # 获取提取模式配置
-            text_style_mode = app.config.get('TEXT_STYLE_EXTRACTION_MODE', 'local_cv')
-            
+            # 使用任务参数中的模式配置（优先于全局配置）
+
             # 使用 Registry 工厂方法创建
             registry = TextAttributeExtractorFactory.create_text_attribute_registry(
                 ai_service=ai_service,
-                mode=text_style_mode
+                mode=text_style_mode  # 使用任务参数
             )
             
             # 由于 ExportService 目前接受 TextAttributeExtractor 接口而不是 Registry，
