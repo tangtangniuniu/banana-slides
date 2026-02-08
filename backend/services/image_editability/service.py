@@ -198,18 +198,31 @@ class ImageEditabilityService:
         """
         使用已有的分析结果执行 inpaint（不重新执行 OCR）
 
+        重要：此方法会过滤元素列表，只保留用户选中的元素。
+        未选中的元素不会进入后续流程（不擦除、不修复、不识别样式、不生成文本框）
+
         Args:
             image_path: 原始图片路径
             editable_image: 已有的 EditableImage 分析结果
-            selected_element_ids: 需要 inpaint 的元素 ID 列表
+            selected_element_ids: 需要处理的元素 ID 列表（用户确认要擦除的）
 
         Returns:
-            更新后的 EditableImage，包含 clean_background
+            更新后的 EditableImage，只包含选中的元素和 clean_background
         """
         logger.info(f"[{editable_image.image_id}] 使用已有分析执行 inpaint，选中 {len(selected_element_ids)} 个元素")
 
-        if not selected_element_ids:
-            logger.info("没有选中的元素，跳过 inpaint")
+        # 过滤元素列表，只保留用户选中的元素
+        # 未选中的元素将被完全移除，不会进入后续流程
+        selected_elements = [e for e in editable_image.elements if e.element_id in selected_element_ids]
+        logger.info(f"过滤后保留 {len(selected_elements)}/{len(editable_image.elements)} 个元素")
+
+        # 更新元素列表为只包含选中的元素
+        editable_image.elements = selected_elements
+
+        if not selected_element_ids or not selected_elements:
+            logger.info("没有选中的元素，跳过 inpaint，使用原图作为背景")
+            # 没有需要擦除的元素，不需要 inpaint，原图就是干净背景
+            editable_image.clean_background = None
             return editable_image
 
         # 加载图片
@@ -220,18 +233,10 @@ class ImageEditabilityService:
             logger.error(f"无法加载图片 {image_path}: {e}")
             raise
 
-        # 过滤选中的元素
-        elements_to_inpaint = [e for e in editable_image.elements if e.element_id in selected_element_ids]
-        logger.info(f"过滤后需要 inpaint 的元素: {len(elements_to_inpaint)}")
-
-        if not elements_to_inpaint:
-            logger.warning("没有匹配的元素需要 inpaint")
-            return editable_image
-
-        # 生成 clean background
+        # 生成 clean background（只对选中的元素进行擦除）
         clean_background = self._generate_clean_background(
             image_path=image_path,
-            elements=elements_to_inpaint,
+            elements=selected_elements,
             image_id=editable_image.image_id,
             depth=0,
             parent_bbox=None,
@@ -242,7 +247,7 @@ class ImageEditabilityService:
 
         # 更新并返回
         editable_image.clean_background = clean_background
-        logger.info(f"[{editable_image.image_id}] inpaint 完成")
+        logger.info(f"[{editable_image.image_id}] inpaint 完成，保留 {len(selected_elements)} 个元素用于生成文本框")
         return editable_image
 
     def _extract_elements(

@@ -822,24 +822,9 @@ class CVTextAttributeExtractor(TextAttributeExtractor):
             relative_thickness = max_thickness / h
             is_bold = relative_thickness > 0.18 # 经验阈值：粗体通常占行高的 20% 以上
 
-            # 4. 判断斜体 (Italic) - 基于倾斜矩分析
-            # 需要更严格的阈值避免误判细字为斜体
+            # 4. 斜体检测已禁用 - 默认使用正常体
+            # 斜体检测误判率较高，暂时禁用
             is_italic = False
-            coords = self.cv2.findNonZero(clean_mask)
-            if coords is not None and len(coords) > 20:  # 需要足够多的点
-                # 计算二阶矩
-                m = self.cv2.moments(clean_mask, binaryImage=True)
-                if abs(m['mu02']) > 1e-5:  # 避免除零
-                    skew = m['mu11'] / m['mu02']
-                    # 斜体文字通常向右倾斜，skew 会有一定的偏移
-                    # 提高阈值，只有明显倾斜才判断为斜体
-                    # 同时检查倾斜方向一致性（真正的斜体通常是一致向右倾斜）
-                    if 0.25 < abs(skew) < 0.7:
-                        # 额外校验：斜体应该有一定的面积占比
-                        area_ratio = text_pixel_count / (h * w)
-                        # 细字体面积占比低，不应轻易判断为斜体
-                        if area_ratio > 0.08:
-                            is_italic = True
 
             return TextStyleResult(
                 font_color_rgb=font_color_rgb,

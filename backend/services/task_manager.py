@@ -1182,18 +1182,16 @@ def export_editable_pptx_with_recursive_analysis_task(
                         continue
 
                     confirmed_ids = page.get_confirmed_element_ids()
-                    if confirmed_ids:
-                        # 使用新方法：只执行 inpaint，不重新 OCR
-                        img_path = image_paths[idx]
-                        logger.info(f"Page {page.id}: inpaint {len(confirmed_ids)} confirmed elements")
-                        editable_img = editability_service.inpaint_with_existing_analysis(
-                            image_path=img_path,
-                            editable_image=editable_img,
-                            selected_element_ids=confirmed_ids
-                        )
-                        editable_images[idx] = editable_img
-                    else:
-                        logger.info(f"Page {page.id}: no confirmed elements, skip inpaint")
+                    # 使用新方法处理：会过滤元素列表，只保留确认的元素
+                    # 如果没有确认的元素，元素列表会被清空，不会生成文本框
+                    img_path = image_paths[idx]
+                    logger.info(f"Page {page.id}: processing with {len(confirmed_ids)} confirmed elements")
+                    editable_img = editability_service.inpaint_with_existing_analysis(
+                        image_path=img_path,
+                        editable_image=editable_img,
+                        selected_element_ids=confirmed_ids
+                    )
+                    editable_images[idx] = editable_img
 
                     completed_count += 1
                     percent = 12 + int(28 * completed_count / total_pages)
