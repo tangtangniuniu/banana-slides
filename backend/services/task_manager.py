@@ -986,6 +986,473 @@ def analyze_layout_task(
                 db.session.commit()
 
 
+class TextErasedPage:
+    """文字抹除结果——每页包含抹除后图片路径和被抹除的文字内容列表"""
+    __slots__ = ('erased_image_path', 'erased_texts', 'original_image_path')
+
+    def __init__(self, erased_image_path: str, erased_texts: List[str], original_image_path: str):
+        self.erased_image_path = erased_image_path
+        self.erased_texts = erased_texts
+        self.original_image_path = original_image_path
+
+
+def _prepare_text_erased_images(
+    pages,
+    image_paths: List[str],
+    file_service,
+    settings,
+    app,
+    max_depth: int = 1,
+    max_workers: int = 4,
+    export_extractor_method: str = 'hybrid',
+    export_inpaint_method: str = 'hybrid',
+    use_confirmed_elements: bool = False,
+    skip_ocr: bool = False,
+    progress_callback=None
+) -> List[TextErasedPage]:
+    """
+    公共管线：OCR 分析 + Inpaint 抹除，返回每页的抹除结果。
+
+    供文字抹除 PDF/Markdown 导出和可编辑 PPTX 导出共同调用。
+
+    Args:
+        pages: Page 对象列表
+        image_paths: 对应的图片绝对路径列表
+        file_service: FileService 实例
+        settings: Settings 对象
+        app: Flask app 实例
+        max_depth: 最大递归深度
+        max_workers: 并发处理数
+        export_extractor_method: 组件提取方法
+        export_inpaint_method: 背景修复方法
+        use_confirmed_elements: 使用人工确认的元素列表
+        skip_ocr: 跳过 OCR（使用已有 layout_analysis）
+        progress_callback: 进度回调函数 (step, message, percent)
+
+    Returns:
+        List[TextErasedPage]，每页包含 erased_image_path 和 erased_texts
+    """
+    import os
+    from services.image_editability import ServiceConfig, ImageEditabilityService, EditableImage
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if progress_callback is None:
+        def progress_callback(step, message, percent):
+            pass
+
+    total_pages = len(image_paths)
+    ai_service = AIService()
+
+    # 初始化服务配置
+    config = ServiceConfig.from_defaults(
+        mineru_token=settings.mineru_token,
+        mineru_api_base=settings.mineru_api_base,
+        upload_folder=app.config.get('UPLOAD_FOLDER'),
+        ai_service=ai_service,
+        extractor_method=export_extractor_method,
+        inpaint_method=export_inpaint_method,
+        max_depth=max_depth,
+        use_local_ocr_inpaint=settings.use_local_ocr_inpaint,
+        local_ocr_url=settings.local_ocr_url,
+        local_inpaint_url=settings.local_inpaint_url
+    )
+    editability_service = ImageEditabilityService(config)
+
+    editable_images = [None] * total_pages
+
+    if skip_ocr and use_confirmed_elements:
+        # 使用已有的 layout_analysis 和 confirmed_element_ids
+        logger.info("_prepare: 使用已有分析结果...")
+        progress_callback("分析", "使用已有分析结果...", 5)
+
+        for idx, page in enumerate(pages):
+            layout_data = page.get_layout_analysis()
+            if layout_data:
+                editable_images[idx] = EditableImage.from_dict(layout_data)
+            progress_callback("分析", f"已加载第 {idx+1}/{total_pages} 页分析结果", 5 + int(5 * (idx+1) / total_pages))
+
+        # 根据 confirmed_element_ids 执行 inpaint
+        logger.info("_prepare: 根据确认元素执行 Inpaint...")
+        progress_callback("重绘", "根据确认元素执行背景重绘...", 12)
+
+        completed_count = 0
+        for idx, (page, editable_img) in enumerate(zip(pages, editable_images)):
+            if editable_img is None:
+                completed_count += 1
+                continue
+
+            confirmed_ids = page.get_confirmed_element_ids()
+            img_path = image_paths[idx]
+            logger.info(f"Page {page.id}: processing with {len(confirmed_ids)} confirmed elements")
+            editable_images[idx] = editability_service.inpaint_with_existing_analysis(
+                image_path=img_path,
+                editable_image=editable_img,
+                selected_element_ids=confirmed_ids
+            )
+            completed_count += 1
+            percent = 12 + int(28 * completed_count / total_pages)
+            progress_callback("重绘", f"已处理第 {completed_count}/{total_pages} 页", percent)
+    else:
+        # 正常流程：执行完整分析
+        logger.info(f"_prepare: 执行图片分析 (extractor={export_extractor_method}, inpaint={export_inpaint_method})...")
+        progress_callback("分析", "初始化分析服务...", 5)
+
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(editability_service.make_image_editable, img_path): idx
+                for idx, img_path in enumerate(image_paths)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    result = future.result()
+                    editable_images[idx] = result
+                    completed_count += 1
+                    percent = 5 + int(35 * completed_count / total_pages)
+                    progress_callback("分析", f"已分析第 {completed_count}/{total_pages} 页", percent)
+                except Exception as e:
+                    logger.error(f"处理图片 {image_paths[idx]} 失败: {e}")
+                    raise
+
+    # 构建结果：提取每页的抹除图片路径和被抹除文字
+    results = []
+    for idx, (page, editable_img) in enumerate(zip(pages, editable_images)):
+        original_path = image_paths[idx]
+
+        if editable_img is None:
+            results.append(TextErasedPage(
+                erased_image_path=original_path,
+                erased_texts=[],
+                original_image_path=original_path
+            ))
+            continue
+
+        # 获取抹除后图片（clean_background）
+        erased_path = editable_img.clean_background if editable_img.clean_background else original_path
+
+        # 获取被抹除的文字内容
+        erased_texts = []
+        if use_confirmed_elements:
+            confirmed_ids = set(page.get_confirmed_element_ids())
+            for elem in editable_img.elements:
+                if elem.element_id in confirmed_ids and elem.content:
+                    erased_texts.append(elem.content)
+        else:
+            # 完整分析模式下，所有被 inpaint 的文字元素都算
+            for elem in editable_img.elements:
+                if elem.element_type in ('text', 'title') and elem.content:
+                    erased_texts.append(elem.content)
+
+        results.append(TextErasedPage(
+            erased_image_path=erased_path,
+            erased_texts=erased_texts,
+            original_image_path=original_path
+        ))
+
+    return results, editable_images
+
+
+def export_text_erased_pdf_task(
+    task_id: str,
+    project_id: str,
+    filename: str,
+    file_service,
+    page_ids: list = None,
+    max_depth: int = 1,
+    max_workers: int = 4,
+    export_extractor_method: str = 'hybrid',
+    export_inpaint_method: str = 'hybrid',
+    use_confirmed_elements: bool = False,
+    skip_ocr: bool = False,
+    app=None
+):
+    """
+    后台任务：导出文字抹除 PDF
+
+    调用公共管线 _prepare_text_erased_images() 进行 OCR + Inpaint，
+    然后使用 ExportService.create_pdf_from_images() 生成 PDF。
+    """
+    logger.info(f"Task {task_id} started: export_text_erased_pdf (project={project_id})")
+
+    if app is None:
+        raise ValueError("Flask app instance must be provided")
+
+    with app.app_context():
+        import os
+        from datetime import datetime
+        from services.export_service import ExportService
+
+        try:
+            project = __import__('models', fromlist=['Project']).Project.query.get(project_id)
+            if not project:
+                raise ValueError(f'Project {project_id} not found')
+
+            pages = get_filtered_pages(project_id, page_ids)
+            if not pages:
+                raise ValueError('No pages found for project')
+
+            image_paths = []
+            for page in pages:
+                if page.generated_image_path:
+                    img_path = file_service.get_absolute_path(page.generated_image_path)
+                    if os.path.exists(img_path):
+                        image_paths.append(img_path)
+
+            if not image_paths:
+                raise ValueError('No generated images found for project')
+
+            total_pages = len(image_paths)
+
+            # 初始化进度
+            task = Task.query.get(task_id)
+            task.status = 'PROCESSING'
+            progress_messages = ["开始导出文字抹除 PDF..."]
+            task.set_progress({
+                "total": 100, "completed": 0, "failed": 0,
+                "current_step": "准备中...", "percent": 0,
+                "messages": progress_messages.copy()
+            })
+            db.session.commit()
+
+            max_messages = 10
+
+            def progress_callback(step, message, percent):
+                nonlocal progress_messages
+                try:
+                    new_msg = f"[{step}] {message}"
+                    progress_messages.append(new_msg)
+                    if len(progress_messages) > max_messages:
+                        progress_messages = progress_messages[-max_messages:]
+                    task_obj = Task.query.get(task_id)
+                    if task_obj:
+                        task_obj.set_progress({
+                            "total": 100, "completed": percent, "failed": 0,
+                            "current_step": message, "percent": percent,
+                            "messages": progress_messages.copy()
+                        })
+                        db.session.commit()
+                except Exception as e:
+                    logger.warning(f"更新进度失败: {e}")
+
+            settings = Settings.get_settings()
+
+            # 执行公共管线
+            text_erased_pages, _ = _prepare_text_erased_images(
+                pages=pages,
+                image_paths=image_paths,
+                file_service=file_service,
+                settings=settings,
+                app=app,
+                max_depth=max_depth,
+                max_workers=max_workers,
+                export_extractor_method=export_extractor_method,
+                export_inpaint_method=export_inpaint_method,
+                use_confirmed_elements=use_confirmed_elements,
+                skip_ocr=skip_ocr,
+                progress_callback=progress_callback
+            )
+
+            # 生成 PDF
+            progress_callback("生成", "正在生成 PDF...", 80)
+
+            exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
+            os.makedirs(exports_dir, exist_ok=True)
+
+            if not filename.endswith('.pdf'):
+                filename += '.pdf'
+
+            output_path = os.path.join(exports_dir, filename)
+            if os.path.exists(output_path):
+                base_name = filename.rsplit('.', 1)[0]
+                timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                filename = f"{base_name}_{timestamp}.pdf"
+                output_path = os.path.join(exports_dir, filename)
+
+            erased_image_paths = [p.erased_image_path for p in text_erased_pages]
+            ExportService.create_pdf_from_images(erased_image_paths, output_file=output_path)
+
+            # 完成
+            download_path = f"/files/{project_id}/exports/{filename}"
+            progress_messages.append("导出完成！")
+
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'COMPLETED'
+                task_obj.completed_at = datetime.utcnow()
+                task_obj.set_progress({
+                    "total": 100, "completed": 100, "failed": 0,
+                    "current_step": "导出完成", "percent": 100,
+                    "messages": progress_messages,
+                    "download_url": download_path,
+                    "filename": filename
+                })
+                db.session.commit()
+                logger.info(f"Task {task_id} completed: {output_path}")
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Task {task_id} failed: {traceback.format_exc()}")
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'FAILED'
+                task_obj.error_message = str(e)
+                task_obj.completed_at = datetime.utcnow()
+                db.session.commit()
+
+
+def export_text_erased_markdown_task(
+    task_id: str,
+    project_id: str,
+    filename: str,
+    file_service,
+    page_ids: list = None,
+    max_depth: int = 1,
+    max_workers: int = 4,
+    export_extractor_method: str = 'hybrid',
+    export_inpaint_method: str = 'hybrid',
+    use_confirmed_elements: bool = False,
+    skip_ocr: bool = False,
+    app=None
+):
+    """
+    后台任务：导出文字抹除 Markdown ZIP
+
+    调用公共管线 _prepare_text_erased_images() 进行 OCR + Inpaint，
+    然后使用 ExportService.create_text_erased_markdown_zip() 生成 ZIP。
+    """
+    logger.info(f"Task {task_id} started: export_text_erased_markdown (project={project_id})")
+
+    if app is None:
+        raise ValueError("Flask app instance must be provided")
+
+    with app.app_context():
+        import os
+        from datetime import datetime
+        from services.export_service import ExportService
+
+        try:
+            project = __import__('models', fromlist=['Project']).Project.query.get(project_id)
+            if not project:
+                raise ValueError(f'Project {project_id} not found')
+
+            pages = get_filtered_pages(project_id, page_ids)
+            if not pages:
+                raise ValueError('No pages found for project')
+
+            image_paths = []
+            for page in pages:
+                if page.generated_image_path:
+                    img_path = file_service.get_absolute_path(page.generated_image_path)
+                    if os.path.exists(img_path):
+                        image_paths.append(img_path)
+
+            if not image_paths:
+                raise ValueError('No generated images found for project')
+
+            # 初始化进度
+            task = Task.query.get(task_id)
+            task.status = 'PROCESSING'
+            progress_messages = ["开始导出文字抹除 Markdown..."]
+            task.set_progress({
+                "total": 100, "completed": 0, "failed": 0,
+                "current_step": "准备中...", "percent": 0,
+                "messages": progress_messages.copy()
+            })
+            db.session.commit()
+
+            max_messages = 10
+
+            def progress_callback(step, message, percent):
+                nonlocal progress_messages
+                try:
+                    new_msg = f"[{step}] {message}"
+                    progress_messages.append(new_msg)
+                    if len(progress_messages) > max_messages:
+                        progress_messages = progress_messages[-max_messages:]
+                    task_obj = Task.query.get(task_id)
+                    if task_obj:
+                        task_obj.set_progress({
+                            "total": 100, "completed": percent, "failed": 0,
+                            "current_step": message, "percent": percent,
+                            "messages": progress_messages.copy()
+                        })
+                        db.session.commit()
+                except Exception as e:
+                    logger.warning(f"更新进度失败: {e}")
+
+            settings = Settings.get_settings()
+
+            # 执行公共管线
+            text_erased_pages, _ = _prepare_text_erased_images(
+                pages=pages,
+                image_paths=image_paths,
+                file_service=file_service,
+                settings=settings,
+                app=app,
+                max_depth=max_depth,
+                max_workers=max_workers,
+                export_extractor_method=export_extractor_method,
+                export_inpaint_method=export_inpaint_method,
+                use_confirmed_elements=use_confirmed_elements,
+                skip_ocr=skip_ocr,
+                progress_callback=progress_callback
+            )
+
+            # 生成 Markdown ZIP
+            progress_callback("生成", "正在生成 Markdown ZIP...", 80)
+
+            exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
+            os.makedirs(exports_dir, exist_ok=True)
+
+            if not filename.endswith('.zip'):
+                filename += '.zip'
+
+            output_path = os.path.join(exports_dir, filename)
+            if os.path.exists(output_path):
+                base_name = filename.rsplit('.', 1)[0]
+                timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                filename = f"{base_name}_{timestamp}.zip"
+                output_path = os.path.join(exports_dir, filename)
+
+            erased_image_paths = [p.erased_image_path for p in text_erased_pages]
+            erased_texts_per_page = [p.erased_texts for p in text_erased_pages]
+
+            ExportService.create_text_erased_markdown_zip(
+                image_paths=erased_image_paths,
+                erased_texts_per_page=erased_texts_per_page,
+                output_file=output_path
+            )
+
+            # 完成
+            download_path = f"/files/{project_id}/exports/{filename}"
+            progress_messages.append("导出完成！")
+
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'COMPLETED'
+                task_obj.completed_at = datetime.utcnow()
+                task_obj.set_progress({
+                    "total": 100, "completed": 100, "failed": 0,
+                    "current_step": "导出完成", "percent": 100,
+                    "messages": progress_messages,
+                    "download_url": download_path,
+                    "filename": filename
+                })
+                db.session.commit()
+                logger.info(f"Task {task_id} completed: {output_path}")
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Task {task_id} failed: {traceback.format_exc()}")
+            task_obj = Task.query.get(task_id)
+            if task_obj:
+                task_obj.status = 'FAILED'
+                task_obj.error_message = str(e)
+                task_obj.completed_at = datetime.utcnow()
+                db.session.commit()
+
+
 def export_editable_pptx_with_recursive_analysis_task(
     task_id: str,
     project_id: str,

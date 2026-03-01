@@ -1083,3 +1083,63 @@ export const convertPdfToPPT = async (
   );
   return response.data;
 };
+
+/**
+ * 导出文字抹除 PDF
+ * OCR 识别 + 用户确认 + Inpaint 抹除后生成 PDF，被抹除文字内容丢弃
+ */
+export const exportTextErasedPdf = async (
+  projectId: string,
+  filename?: string,
+  pageIds?: string[],
+  extractorMethod?: 'mineru' | 'hybrid' | 'local',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid' | 'local',
+  useConfirmedElements?: boolean,
+  skipOcr?: boolean,
+  maxDepth?: number,
+  maxWorkers?: number
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const response = await apiClient.post<
+    ApiResponse<{ task_id: string }>
+  >(`/api/projects/${projectId}/export/text-erased-pdf`, {
+    filename,
+    page_ids: pageIds,
+    extractor_method: extractorMethod,
+    inpaint_method: inpaintMethod,
+    use_confirmed_elements: useConfirmedElements,
+    skip_ocr: skipOcr,
+    max_depth: maxDepth,
+    max_workers: maxWorkers
+  });
+  return response.data;
+};
+
+/**
+ * 导出文字抹除 Markdown ZIP
+ * OCR 识别 + 用户确认 + Inpaint 抹除后生成 Markdown + 图片 ZIP，被抹除文字附在图片链接后
+ */
+export const exportTextErasedMarkdown = async (
+  projectId: string,
+  filename?: string,
+  pageIds?: string[],
+  extractorMethod?: 'mineru' | 'hybrid' | 'local',
+  inpaintMethod?: 'generative' | 'baidu' | 'hybrid' | 'local',
+  useConfirmedElements?: boolean,
+  skipOcr?: boolean,
+  maxDepth?: number,
+  maxWorkers?: number
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const response = await apiClient.post<
+    ApiResponse<{ task_id: string }>
+  >(`/api/projects/${projectId}/export/text-erased-markdown`, {
+    filename,
+    page_ids: pageIds,
+    extractor_method: extractorMethod,
+    inpaint_method: inpaintMethod,
+    use_confirmed_elements: useConfirmedElements,
+    skip_ocr: skipOcr,
+    max_depth: maxDepth,
+    max_workers: maxWorkers
+  });
+  return response.data;
+};

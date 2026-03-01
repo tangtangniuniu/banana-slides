@@ -13,7 +13,7 @@ from utils import (
 )
 from services import ExportService, FileService
 from services.ai_service_manager import get_ai_service
-from services.task_manager import task_manager, analyze_layout_task
+from services.task_manager import task_manager, analyze_layout_task, export_text_erased_pdf_task, export_text_erased_markdown_task
 
 logger = logging.getLogger(__name__)
 
@@ -488,4 +488,204 @@ def preprocess_ocr(project_id):
 
     except Exception as e:
         logger.exception("Error creating preprocess OCR task")
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@export_bp.route('/<project_id>/export/text-erased-pdf', methods=['POST'])
+def export_text_erased_pdf(project_id):
+    """
+    POST /api/projects/{project_id}/export/text-erased-pdf - 导出文字抹除 PDF（异步）
+
+    对指定页面执行 OCR 识别 + Inpaint 文字抹除，生成仅包含抹除后图片的 PDF。
+    被抹除的文字内容丢弃。
+
+    Request body (JSON):
+        {
+            "filename": "optional_custom_name.pdf",
+            "page_ids": ["id1", "id2"],
+            "use_confirmed_elements": false,
+            "skip_ocr": false,
+            "extractor_method": "hybrid",
+            "inpaint_method": "hybrid",
+            "max_depth": 1,
+            "max_workers": 4
+        }
+    """
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+
+        data = request.get_json() or {}
+
+        selected_page_ids = parse_page_ids_from_body(data)
+        pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
+
+        if not pages:
+            return bad_request("No pages found for project")
+
+        has_images = any(page.generated_image_path for page in pages)
+        if not has_images:
+            return bad_request("No generated images found for project")
+
+        filename = data.get('filename', f'text_erased_{project_id}.pdf')
+        if not filename.endswith('.pdf'):
+            filename += '.pdf'
+
+        max_depth = data.get('max_depth', 1)
+        max_workers = data.get('max_workers', 4)
+        use_confirmed_elements = data.get('use_confirmed_elements', False)
+        skip_ocr = data.get('skip_ocr', False)
+
+        if not isinstance(max_depth, int) or max_depth < 1 or max_depth > 5:
+            return bad_request("max_depth must be an integer between 1 and 5")
+        if not isinstance(max_workers, int) or max_workers < 1 or max_workers > 16:
+            return bad_request("max_workers must be an integer between 1 and 16")
+
+        export_extractor_method = data.get('extractor_method') or project.export_extractor_method or 'hybrid'
+        export_inpaint_method = data.get('inpaint_method') or project.export_inpaint_method or 'hybrid'
+
+        if export_extractor_method not in ['mineru', 'hybrid', 'local']:
+            export_extractor_method = 'hybrid'
+        if export_inpaint_method not in ['generative', 'baidu', 'hybrid', 'local']:
+            export_inpaint_method = 'hybrid'
+
+        task = Task(
+            project_id=project_id,
+            task_type='EXPORT_TEXT_ERASED_PDF',
+            status='PENDING'
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        app = current_app._get_current_object()
+
+        task_manager.submit_task(
+            task.id,
+            export_text_erased_pdf_task,
+            project_id=project_id,
+            filename=filename,
+            file_service=file_service,
+            page_ids=selected_page_ids if selected_page_ids else None,
+            max_depth=max_depth,
+            max_workers=max_workers,
+            export_extractor_method=export_extractor_method,
+            export_inpaint_method=export_inpaint_method,
+            use_confirmed_elements=use_confirmed_elements,
+            skip_ocr=skip_ocr,
+            app=app
+        )
+
+        return success_response(
+            data={
+                "task_id": task.id,
+                "max_depth": max_depth,
+                "max_workers": max_workers
+            },
+            message="Text-erased PDF export task created"
+        )
+
+    except Exception as e:
+        logger.exception("Error creating text-erased PDF export task")
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@export_bp.route('/<project_id>/export/text-erased-markdown', methods=['POST'])
+def export_text_erased_markdown(project_id):
+    """
+    POST /api/projects/{project_id}/export/text-erased-markdown - 导出文字抹除 Markdown ZIP（异步）
+
+    对指定页面执行 OCR 识别 + Inpaint 文字抹除，生成 Markdown + 图片的 ZIP 包。
+    被抹除的文字内容保留在 Markdown 中图片链接之后。
+
+    Request body (JSON):
+        {
+            "filename": "optional_custom_name.zip",
+            "page_ids": ["id1", "id2"],
+            "use_confirmed_elements": false,
+            "skip_ocr": false,
+            "extractor_method": "hybrid",
+            "inpaint_method": "hybrid",
+            "max_depth": 1,
+            "max_workers": 4
+        }
+    """
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+
+        data = request.get_json() or {}
+
+        selected_page_ids = parse_page_ids_from_body(data)
+        pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
+
+        if not pages:
+            return bad_request("No pages found for project")
+
+        has_images = any(page.generated_image_path for page in pages)
+        if not has_images:
+            return bad_request("No generated images found for project")
+
+        filename = data.get('filename', f'text_erased_{project_id}.zip')
+        if not filename.endswith('.zip'):
+            filename += '.zip'
+
+        max_depth = data.get('max_depth', 1)
+        max_workers = data.get('max_workers', 4)
+        use_confirmed_elements = data.get('use_confirmed_elements', False)
+        skip_ocr = data.get('skip_ocr', False)
+
+        if not isinstance(max_depth, int) or max_depth < 1 or max_depth > 5:
+            return bad_request("max_depth must be an integer between 1 and 5")
+        if not isinstance(max_workers, int) or max_workers < 1 or max_workers > 16:
+            return bad_request("max_workers must be an integer between 1 and 16")
+
+        export_extractor_method = data.get('extractor_method') or project.export_extractor_method or 'hybrid'
+        export_inpaint_method = data.get('inpaint_method') or project.export_inpaint_method or 'hybrid'
+
+        if export_extractor_method not in ['mineru', 'hybrid', 'local']:
+            export_extractor_method = 'hybrid'
+        if export_inpaint_method not in ['generative', 'baidu', 'hybrid', 'local']:
+            export_inpaint_method = 'hybrid'
+
+        task = Task(
+            project_id=project_id,
+            task_type='EXPORT_TEXT_ERASED_MARKDOWN',
+            status='PENDING'
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        app = current_app._get_current_object()
+
+        task_manager.submit_task(
+            task.id,
+            export_text_erased_markdown_task,
+            project_id=project_id,
+            filename=filename,
+            file_service=file_service,
+            page_ids=selected_page_ids if selected_page_ids else None,
+            max_depth=max_depth,
+            max_workers=max_workers,
+            export_extractor_method=export_extractor_method,
+            export_inpaint_method=export_inpaint_method,
+            use_confirmed_elements=use_confirmed_elements,
+            skip_ocr=skip_ocr,
+            app=app
+        )
+
+        return success_response(
+            data={
+                "task_id": task.id,
+                "max_depth": max_depth,
+                "max_workers": max_workers
+            },
+            message="Text-erased Markdown export task created"
+        )
+
+    except Exception as e:
+        logger.exception("Error creating text-erased Markdown export task")
         return error_response('SERVER_ERROR', str(e), 500)

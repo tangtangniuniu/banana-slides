@@ -8,7 +8,10 @@ import { cn } from '@/utils';
 const taskTypeLabels: Record<ExportTaskType, string> = {
   'pptx': 'PPTX',
   'pdf': 'PDF',
+  'markdown': 'Markdown',
   'editable-pptx': '可编辑 PPTX',
+  'text-erased-pdf': '文字抹除 PDF',
+  'text-erased-markdown': '文字抹除 Markdown',
 };
 
 /**

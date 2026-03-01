@@ -1,0 +1,39 @@
+# 依赖
+node_modules
+.pnpm-store
+
+# 编译输出
+dist
+*.js
+*.d.ts
+*.map
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 编辑器
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+coverage
+
+# 临时文件
+*.tmp
+*.temp

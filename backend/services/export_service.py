@@ -335,7 +335,59 @@ class ExportService:
         except Exception as e:
             logger.error(f"Failed to create markdown zip: {e}")
             raise
-       
+
+    @staticmethod
+    def create_text_erased_markdown_zip(
+        image_paths: List[str],
+        erased_texts_per_page: List[List[str]],
+        output_file: str
+    ) -> None:
+        """
+        Create a ZIP file containing markdown with text-erased images and erased text content.
+
+        Args:
+            image_paths: List of absolute paths to text-erased images
+            erased_texts_per_page: List of erased text lists per page
+            output_file: Output ZIP file path
+        """
+        import zipfile
+
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        try:
+            with zipfile.ZipFile(output_file, 'w') as zipf:
+                md_content = "# Presentation\n\n"
+
+                for i, img_path in enumerate(image_paths):
+                    slide_num = i + 1
+
+                    if os.path.exists(img_path):
+                        ext = os.path.splitext(img_path)[1] or '.png'
+                        arcname = f"images/slide_{slide_num:03d}{ext}"
+                        zipf.write(img_path, arcname)
+                    else:
+                        logger.warning(f"Image not found: {img_path}")
+                        arcname = f"images/slide_{slide_num:03d}.png"
+
+                    md_content += f"## Slide {slide_num}\n\n"
+                    md_content += f"![Slide {slide_num}]({arcname})\n\n"
+
+                    erased_texts = erased_texts_per_page[i] if i < len(erased_texts_per_page) else []
+                    if erased_texts:
+                        md_content += "> 被抹除的文字：\n"
+                        for text in erased_texts:
+                            md_content += f"> - {text}\n"
+                        md_content += "\n"
+
+                    md_content += "---\n\n"
+
+                zipf.writestr("presentation.md", md_content)
+                logger.info(f"Created text-erased markdown zip: {output_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to create text-erased markdown zip: {e}")
+            raise
+
     @staticmethod
     def _add_mineru_text_to_slide(builder, slide, text_item: Dict[str, Any], scale_x: float = 1.0, scale_y: float = 1.0):
         """

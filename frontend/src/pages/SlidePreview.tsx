@@ -32,7 +32,7 @@ import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useExportTasksStore, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
-import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportMarkdown as apiExportMarkdown, exportEditablePPTX as apiExportEditablePPTX, preprocessOCR, getLayoutAnalysis, batchUpdateConfirmedElements, getTaskStatus } from '@/api/endpoints';
+import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportMarkdown as apiExportMarkdown, exportEditablePPTX as apiExportEditablePPTX, exportTextErasedPdf as apiExportTextErasedPdf, exportTextErasedMarkdown as apiExportTextErasedMarkdown, preprocessOCR, getLayoutAnalysis, batchUpdateConfirmedElements, getTaskStatus } from '@/api/endpoints';
 import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, VerificationPageData } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
 
@@ -721,7 +721,7 @@ export const SlidePreview: React.FC = () => {
     return Array.from(selectedPageIds);
   };
 
-  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx', options?: {
+  const handleExport = async (type: 'pptx' | 'pdf' | 'markdown' | 'editable-pptx' | 'text-erased-pdf' | 'text-erased-markdown', options?: {
     extractor?: ExportExtractorMethod | 'local';
     inpaint?: ExportInpaintMethod | 'local';
     useConfirmedElements?: boolean;
@@ -800,6 +800,43 @@ export const SlidePreview: React.FC = () => {
           });
 
           // Start polling in background (non-blocking)
+          pollExportTask(exportTaskId, projectId, taskId);
+        }
+      } else if (type === 'text-erased-pdf' || type === 'text-erased-markdown') {
+        // Async export - text erased PDF or Markdown
+        addTask({
+          id: exportTaskId,
+          taskId: '',
+          projectId,
+          type,
+          status: 'PROCESSING',
+          pageIds: pageIds,
+        });
+
+        show({ message: '导出任务已开始，可在导出任务面板查看进度', type: 'success' });
+
+        const exportFn = type === 'text-erased-pdf' ? apiExportTextErasedPdf : apiExportTextErasedMarkdown;
+        const response = await exportFn(
+          projectId,
+          undefined,
+          pageIds,
+          options?.extractor as any,
+          options?.inpaint as any,
+          options?.useConfirmedElements,
+          options?.skipOcr
+        );
+        const taskId = response.data?.task_id;
+
+        if (taskId) {
+          addTask({
+            id: exportTaskId,
+            taskId,
+            projectId,
+            type,
+            status: 'PROCESSING',
+            pageIds: pageIds,
+          });
+
           pollExportTask(exportTaskId, projectId, taskId);
         }
       }
@@ -1299,6 +1336,19 @@ export const SlidePreview: React.FC = () => {
                   className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
                 >
                   导出为 Markdown ZIP
+                </button>
+                <div className="border-t border-gray-100 my-1"></div>
+                <button
+                  onClick={() => handleExport('text-erased-pdf', { useConfirmedElements: true, skipOcr: true })}
+                  className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
+                >
+                  导出文字抹除 PDF
+                </button>
+                <button
+                  onClick={() => handleExport('text-erased-markdown', { useConfirmedElements: true, skipOcr: true })}
+                  className="w-full px-4 py-2 text-left hover:bg-gray-50 transition-colors text-sm"
+                >
+                  导出文字抹除 Markdown
                 </button>
               </div>
             )}

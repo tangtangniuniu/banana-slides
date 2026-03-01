@@ -4,7 +4,7 @@ import * as api from '@/api/endpoints';
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
 export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
-export type ExportTaskType = 'pptx' | 'pdf' | 'markdown' | 'editable-pptx';
+export type ExportTaskType = 'pptx' | 'pdf' | 'markdown' | 'editable-pptx' | 'text-erased-pdf' | 'text-erased-markdown';
 
 export interface ExportTask {
   id: string;
